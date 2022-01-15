@@ -1,5 +1,5 @@
 discard """
-  matrix: "--hints=on --path:."
+  matrix: "--hints=on --hint=all:off --hint:XDeclaredButNotUsed --path:."
   joinable: false
   nimoutFull: true
   nimout: '''

@@ -391,7 +391,8 @@ proc quit(conf: ConfigRef; withTrace: bool) {.gcsafe.} =
           trace: getStackTraceEntries()))
 
       else:
-        discard conf.report(InternalReport(kind: rintMissingStackTrace))
+        discard conf.report(InternalReport(
+          kind: rintMissingStackTrace))
 
   quit 1
 

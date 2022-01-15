@@ -3302,15 +3302,15 @@ proc reportHook*(conf: ConfigRef, r: Report): TErrorHandling =
     not conf.isEnabled(r) and
     # And not added for forced write
     r.kind notin forceWrite
-  ) or
+  ) or (
     # Or we are in the special hack mode for `compiles()` processing
-       tryhack:
+    tryhack
+  ) or (
+    # Optionally Ignore context stacktrace
+    not semStack and r.kind == rdbgTraceLine
+  ):
 
     # Return without writing
-    return
-
-  elif not semStack and r.kind == rdbgTraceLine:
-    # Optionally Ignore context stacktrace
     return
 
   elif r.kind == rsemProcessing and conf.hintProcessingDots:
