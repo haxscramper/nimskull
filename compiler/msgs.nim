@@ -570,6 +570,9 @@ template localReport*(conf: ConfigRef, report: ReportTypes) =
   handleReport(
     conf, wrap(report, instLoc()), instLoc(), doNothing)
 
+template localReport*(conf: ConfigRef, report: Report) =
+  handleReport(conf, report, instLoc(), doNothing)
+
 
 proc semReportCountMismatch*(
     kind: ReportKind,

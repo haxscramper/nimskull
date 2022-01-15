@@ -413,11 +413,6 @@ type
       debugUtilsStack*: seq[string] ## which proc name to stop trace output
       ## len is also used for output indent level
 
-    callDiagnostics*: seq[SemCallDiagnostics] ## Additional call resolution
-    ## diagnostics that are used to provide more detailed error messages in
-    ## case of the compilation failure. Populated in the `sigcall.matches`
-
-
 template changed(conf: ConfigRef, s: ConfNoteSet, body: untyped) =
   # Template for debugging purposes - single place to track all changes in
   # the enabled note sets.
@@ -542,6 +537,9 @@ proc setReportHook*(conf: ConfigRef, hook: ReportHook) =
   assert not hook.isNil
   conf.structuredReportHook = hook
 
+proc getReportHook*(conf: ConfigRef): ReportHook =
+  conf.structuredReportHook
+
 proc report*(conf: ConfigRef, inReport: Report): TErrorHandling =
   ## Write `inReport`
   assert inReport.kind != repNone, "Cannot write out empty report"
@@ -595,6 +593,9 @@ proc addReport*(conf: ConfigRef, report: Report): ReportId =
 proc getReport*(conf: ConfigRef, report: ReportId): Report =
   assert not report.isEmpty(), $report
   result = conf.m.reports.getReport(report)
+
+proc getReport*(conf: ConfigRef, err: PNode): Report =
+  conf.getReport(err.reportId)
 
 template store*(conf: ConfigRef, report: ReportTypes): untyped =
   conf.addReport(wrap(report, instLoc()))

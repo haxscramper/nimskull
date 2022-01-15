@@ -214,12 +214,6 @@ proc effectProblem(f, a: PType; result: var string) =
       of efEffectsDelayed:
         result.add "\n  The `.effectsOf` annotations differ."
 
-proc format(diag: SemCallDiagnostics): string =
-  case diag.kind:
-    of scalldDefaultParamIsIncompatible:
-      return "The default parameter '" & diag.param.name.s &
-        "' has incompatible type with the explicitly requested proc instantiation"
-
 proc argTypeToString(arg: PNode; prefer: TPreferedDesc): string =
   if arg.kind in nkSymChoices:
     result = typeToString(arg[0].typ, prefer)
@@ -416,9 +410,6 @@ proc presentFailedCandidates(
           n.kind == nkCommand:
         maybeWrongSpace = true
 
-    for diag in err.diagnostics:
-      candidates.add(format(diag) & "\n")
-
     candidatesAll.add candidates
 
   candidatesAll.sort # fix #13538
@@ -431,7 +422,8 @@ proc presentFailedCandidates(
         "suppressed; compile with --showAllMismatches:on to see them\n")
 
   if maybeWrongSpace:
-    candidates.add("maybe misplaced space between " & renderTree(n[0]) & " and '(' \n")
+    candidates.add(
+      "maybe misplaced space between " & renderTree(n[0]) & " and '(' \n")
 
   result = (prefer, candidates)
 

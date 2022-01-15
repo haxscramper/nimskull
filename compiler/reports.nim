@@ -1130,14 +1130,6 @@ type
     actualType*, formalType*: PType
     descriptionStr*: string
 
-  SemCallDiagnosticsKind* = enum
-    scalldDefaultParamIsIncompatible
-
-  SemCallDiagnostics* = object
-    case kind*: SemCallDiagnosticsKind
-      of scalldDefaultParamIsIncompatible:
-        param*: PSym
-
   SemCallMismatch* = object
     ## Description of the single candidate mismatch. This type is later
     ## used to construct meaningful type mismatch message, and must contain
@@ -1152,7 +1144,7 @@ type
     ## target argument symbol.
     targetArg*: PSym ## parameter that mismatches against provided
     ## argument its position can differ from `arg` because of varargs
-    diagnostics*: seq[SemCallDiagnostics]
+    diagnostics*: seq[SemReport]
     arguments*: seq[PNode]
     case kind*: MismatchKind
       of kTypeMismatch, kVarNeeded:

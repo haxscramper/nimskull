@@ -29,7 +29,7 @@ type
   CandidateError* = object
     sym*: PSym
     firstMismatch*: MismatchInfo
-    diagnostics*: seq[SemCallDiagnostics]
+    diagnostics*: seq[SemReport]
     isDiagnostic*: bool
       ## is this is a diagnostic (true) or an error (false) that occurred
       ## xxx: this might be a terrible idea and we could get rid of it
@@ -66,11 +66,10 @@ type
                               # matching. they will be reset if the matching
                               # is not successful. may replace the bindings
                               # table in the future.
-    diagnostics*: seq[SemCallDiagnostics] ## when diagnosticsEnabled, the
-    ## matching process will collect extra diagnostics that will be
-    ## displayed to the user. triggered when overload resolution fails or
-    ## when the explain pragma is used. may be triggered with an idetools
-    ## command in the future.
+    diagnostics*: seq[SemReport] ## The matching process (for concepts)
+    ## will collect extra diagnostics that will be displayed to the user.
+    ## triggered when overload resolution fails or when the explain pragma
+    ## is used.
     inheritancePenalty: int   # to prefer closest father object type
     firstMismatch*: MismatchInfo # mismatch info for better error messages
     diagnosticsEnabled*: bool
@@ -692,25 +691,46 @@ proc matchUserTypeClass*(m: var TCandidate; ff, a: PType): PType =
 
       addDecl(c, param)
 
-  var flags: TExprFlags = {}
+  var
+    flags: TExprFlags = {}
+    diagnostics: seq[SemReport]
 
-  let collectDiagnostics = m.diagnosticsEnabled or sfExplain in typeClass.sym.flags
+  # When concept substitution is performed fake body is supplied and then
+  # semantic analysis is ran. All errors during matching are ignored unless
+  # `{.explain.}` annotation is added to the concept, or `--explain` fiag
+  # is used.
 
-  if collectDiagnostics:
+  let
+    storeDiagnostics = m.diagnosticsEnabled or sfExplain in typeClass.sym.flags
+    tmpHook = c.config.getReportHook()
+
+  if storeDiagnostics:
+    # If concept need to be explained, all sem errors are temporarily
+    # captured for error reporting, and then fully written out
     flags = {efExplain}
+    c.config.setReportHook(
+      proc(conf: ConfigRef, report: Report): TErrorHandling =
+        if report.category == repSem and conf.isCodeError(report):
+          diagnostics.add report.semReport
+    )
 
   var checkedBody = c.semTryExpr(c, body.copyTree, flags)
 
-  if collectDiagnostics:
+  if storeDiagnostics:
+    c.config.setReportHook(tmpHook)
+
+    if checkedBody != nil:
+      for e in m.c.config.walkErrors(checkedBody):
+        m.diagnostics.add c.config.getReport(e).semReport
+        m.diagnosticsEnabled = true
+
     # REFACTOR(nkError) Until nkError reporting is fully implemented in the
-    # `sigmatch.matches` we need to rely on the global-ish list of
-    # diagnostics that is modified during `semTryExpr`, and then moved over
-    # to the candidate match data.
-    for d in m.c.config.callDiagnostics:
+    # `sigmatch.matches` we need to rely on the report writer hack that is
+    # modified during `semTryExpr`, and then moved over to the candidate
+    # match data. When nkError is implemented this needs to be removed.
+    for d in diagnostics:
       m.diagnostics.add d
       m.diagnosticsEnabled = true
-
-    m.c.config.callDiagnostics = @[]
 
   if checkedBody == nil or checkedBody.kind == nkError:
     # xxx: return nil on nkError doesn't seem quite right, but this is a type
