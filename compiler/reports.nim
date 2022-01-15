@@ -1184,6 +1184,9 @@ type
       of rsemDuplicateModuleImport:
         previous*: PSym
 
+      of rsemCannotInstantiateWithParameter:
+        arguments*: tuple[got, expected: seq[PNode]]
+
       of rsemUnavailableTypeBound:
         missingTypeBoundElaboration*: tuple[
           anotherRead: Option[TLineInfo],
@@ -1295,7 +1298,6 @@ type
          rsemVmCannotCast,
          rsemIllegalConversion,
          rsemConceptInferenceFailed,
-         rsemCannotInstantiateWithParameter,
          rsemCannotCastTypes,
          rsemGenericTypeExpected,
          rsemCannotBeOfSubtype,

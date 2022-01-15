@@ -1922,7 +1922,9 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
       result = "cannot instantiate "
       result.addTypeHeader(conf, r.typ)
       result.add "\ngot: <$1>\nbut expected: <$2>" % [
-        describeArgs(conf, r.ast), describeArgs(conf, r.typ.n, 0)]
+        describeArgs(conf, r.arguments.got),
+        describeArgs(conf, r.arguments.expected)
+      ]
 
     of rsemCannotGenerateGenericDestructor:
       result = "cannot generate destructor for generic type: " & r.typ.render

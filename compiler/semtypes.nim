@@ -1627,8 +1627,10 @@ proc semGeneric(c: PContext, n: PNode, s: PSym, prev: PType): PType =
     matches(c, n, copyTree(n), m)
 
     if m.state != csMatch:
-      localReport(c.config, n.info, reportTyp(
-        rsemCannotInstantiateWithParameter, t, ast = n))
+      localReport(c.config, n.info):
+        reportTyp(rsemCannotInstantiateWithParameter, t, ast = n).withIt do:
+          it.arguments.got = maybeResemArgs(c, n)
+          it.arguments.expected = maybeResemArgs(c, t.n, 0)
 
       return newOrPrevType(tyError, prev, c)
 
