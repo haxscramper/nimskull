@@ -86,6 +86,9 @@ proc computeNotesVerbosity(): tuple[
   }
 
 
+  if defined(release):
+    result.main[3].excl rintStackTrace
+
 
   result.main[2] = result.main[3] - {
     rsemUninit,
