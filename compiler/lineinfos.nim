@@ -81,7 +81,6 @@ proc computeNotesVerbosity(): tuple[
     rcmdLinking,
     rcmdCompiling,
 
-    rintMsgOrigin,
     rintErrKind
   }
 
@@ -95,7 +94,7 @@ proc computeNotesVerbosity(): tuple[
     rsemExtendedContext,
     rsemProcessingStmt,
     rsemWarnGcUnsafe,
-    rextConf
+    rextConf,
   }
 
   result.main[1] = result.main[2] - {
@@ -104,7 +103,7 @@ proc computeNotesVerbosity(): tuple[
     rextPath,
     rsemHintLibDependency,
     rsemGlobalVar,
-    rintGCStats
+    rintGCStats,
   }
 
   result.main[0] = result.main[1] - {
@@ -113,7 +112,8 @@ proc computeNotesVerbosity(): tuple[
     rsemProcessing,
     rsemPattern,
     rcmdExecuting,
-    rbackLinking
+    rbackLinking,
+    rintMsgOrigin
   }
 
   result.foreign = result.base + {

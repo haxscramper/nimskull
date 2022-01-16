@@ -274,6 +274,8 @@ type
     rsemUserError = "UserError" ## `{.error: }`
     rsemUsageIsError
 
+    rsemCompilesError
+
     rsemCustomError
     rsemCustomPrintMsgAndNodeError
       ## just like custom error, prints a message and renders wrongNode
@@ -869,7 +871,7 @@ type
     rsemExpandMacro = "ExpandMacro" ## Trace macro expansion progress
     rsemExpandArc = "ExpandArc"
 
-    rsemCompilesDummyReport
+    rsemCompilesReport
     rsemNonMatchingCandidates
     rsemUserRaw = "UserRaw" # REVIEW - Used in
     # `semcall.semOverloadedCall()` and `extccomp.getCompileCFileCmd()`.

@@ -421,10 +421,11 @@ template changed(conf: ConfigRef, s: ConfNoteSet, body: untyped) =
     body
     let after = conf.noteSets[s]
 
-    # if (rextConf in before) != (rextConf in after):
-    #   writeStackTrace()
-    #   echo "changed conf $# -> $#" % [
-    #     $(rextConf in before) , $(rextConf in after)]
+    # let n = rintMsgOrigin
+    # if (n in before) != (n in after):
+    #   if n notin after:
+    #     writeStackTrace()
+    #     echo "changed conf $# -> $#" % [$(n in before), $(n in after)]
 
   else:
     body

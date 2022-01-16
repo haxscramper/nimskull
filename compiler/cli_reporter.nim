@@ -2035,8 +2035,8 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
     of rsemXDeclaredButNotUsed:
       result = "'$1' is declared but not used" % r.symstr
 
-    of rsemCompilesDummyReport:
-      assert false, "Temporary report for `compiles()` speedup cannot be printed"
+    of rsemCompilesReport, rsemCompilesError:
+      assert false, "Temporary report for `compiles()` speedup, cannot be printed"
 
     of rsemCannotMakeSink:
       result = "could not turn '$1' to a sink parameter" % r.symstr
@@ -3320,6 +3320,7 @@ var traceFile: File
 
 proc rotatedTrace(conf: ConfigRef, r: Report) =
   # Dispatch each `{.define(nimCompilerDebug).}` section into separate file
+  assert r.kind in rdbgTracerKinds, $r.kind
   case r.kind:
     of rdbgTraceDefined, rdbgTraceStart:
       if not dirExists(conf.getDefined(traceDir)):
@@ -3332,7 +3333,7 @@ proc rotatedTrace(conf: ConfigRef, r: Report) =
       inc traceIndex
 
     else:
-      traceFile.writeLine(conf.reportFull(r))
+      discard
 
 
 proc reportHook*(conf: ConfigRef, r: Report): TErrorHandling =

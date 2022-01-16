@@ -1572,7 +1572,7 @@ proc trackProc*(c: PContext; s: PSym, body: PNode) =
 
       else:
         # simple error for `system.compiles` context
-        localReport(g.config, s.info, reportSem(rsemCompilesDummyReport))
+        localReport(g.config, s.info, reportSem(rsemCompilesError))
 
   if not t.gcUnsafe:
     s.typ.flags.incl tfGcSafe

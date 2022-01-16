@@ -294,7 +294,8 @@ proc getMsgDiagnostic(
     # we avoid running more diagnostic when inside a `compiles(expr)`, to
     # errors while running diagnostic (see test D20180828T234921), and
     # also avoid slowdowns in evaluating `compiles(expr)`.
-    result = SemReport(kind: rsemCompilesDummyReport)
+    result = SemReport(kind: rsemCompilesReport)
+
   else:
     var o: TOverloadIter
     if {nfDotField, nfExplicitCall} * n.flags == {nfDotField}:
