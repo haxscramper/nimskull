@@ -1304,7 +1304,6 @@ proc track(tracked: PEffects, n: PNode) =
 
     inc tracked.leftPartOfAsgn
   of nkError:
-    doAssert false, "what the actual fuck"
     for e in walkErrors(tracked.config, n):
       localReport(tracked.config, e)
   else:
