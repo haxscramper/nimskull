@@ -1,3 +1,6 @@
+## Enum types used in nilability check reports and `nilcheck`
+## implementation itself
+
 type
   NilTransition* = enum
     ## transition kind: what was the reason for changing the nilability of
