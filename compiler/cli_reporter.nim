@@ -430,9 +430,6 @@ proc presentFailedCandidates(
 
   result = (prefer, candidates)
 
-
-
-
 proc presentSpellingCandidates*(
   conf: ConfigRef, candidates: seq[SemSpellCandidate]): string =
 

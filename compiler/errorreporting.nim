@@ -14,6 +14,7 @@
 ##   determines which error handling strategy to use doNothing, raise, etc.
 
 import ast, errorhandling, renderer, reports
+from options import ConfigRef
 from msgs import TErrorHandling
 
 export compilerInstInfo, walkErrors, errorKind
@@ -29,3 +30,10 @@ proc errorHandling*(err: PNode): TErrorHandling =
     of rsemCustomGlobalError: doRaise
     of rsemFatalError: doAbort
     else: doNothing
+
+template localReport*(conf: ConfigRef, node: PNode) =
+  ## Write out existing sem report that is stored in the nkError node
+  assert node.kind == nkError, $node.kind
+  for err in walkErrors(conf, node):
+    if true or canReport(conf, err):
+      handleReport(conf, err.reportId, instLoc(), node.errorHandling)

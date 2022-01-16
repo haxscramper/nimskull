@@ -12,7 +12,7 @@ import std/[algorithm, strutils]
 import
   intsets, ast, astalgo, idents, semdata, msgs, options,
   renderer, nimfix/prettybase, lineinfos, modulegraphs,
-  errorhandling, reports, debugutils
+  errorhandling, errorreporting, reports
 
 proc ensureNoMissingOrUnusedSymbols(c: PContext; scope: PScope)
 

@@ -1021,6 +1021,7 @@ proc castBlock(tracked: PEffects, pragma: PNode, bc: var PragmaBlockContext) =
       rsemInvalidPragmaBlock, pragma))
 
 proc trackInnerProc(tracked: PEffects, n: PNode) =
+  addInNimDebugUtils(tracked.config, "trackInnerProc")
   case n.kind
   of nkSym:
     let s = n.sym
@@ -1049,7 +1050,7 @@ proc allowCStringConv(n: PNode): bool =
   else: result = isCharArrayPtr(n.typ, false)
 
 proc track(tracked: PEffects, n: PNode) =
-  addInNimDebugUtils(tracked.config, "track " & $n.kind)
+  addInNimDebugUtils(tracked.config, "track")
   case n.kind
   of nkSym:
     useVar(tracked, n)
@@ -1303,6 +1304,7 @@ proc track(tracked: PEffects, n: PNode) =
 
     inc tracked.leftPartOfAsgn
   of nkError:
+    doAssert false, "what the actual fuck"
     for e in walkErrors(tracked.config, n):
       localReport(tracked.config, e)
   else:

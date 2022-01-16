@@ -23,7 +23,7 @@ import
   idents, renderer, types, semfold, magicsys, cgmeth,
   lowerings, liftlocals,
   modulegraphs, lineinfos,
-  errorhandling
+  errorreporting
 
 proc transformBody*(g: ModuleGraph; idgen: IdGenerator, prc: PSym, cache: bool): PNode
 
