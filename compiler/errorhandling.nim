@@ -33,7 +33,7 @@
 
 import ast, msgs, options
 from lineinfos import unknownLineInfo
-import reports
+import reports, debugutils
 
 proc errorSubNode*(n: PNode): PNode =
   ## find the first error node, or nil, under `n` using a depth first traversal
@@ -63,14 +63,14 @@ func compilerInstInfo*(e: PNode): InstantiationInfo {.inline.} =
   (filename: i.strVal, line: i.info.line.int, column: i.info.col.int)
 
 proc newError*(
+    conf: ConfigRef;
     wrongNode: PNode;
     errorKind: ReportKind,
     report: ReportId,
     inst: InstantiationInfo,
     args: varargs[PNode]
   ): PNode =
-  ## Create `nkError` node with with given error report and additional
-  ## subnodes.
+  ## Create `nkError` node with given error report and additional subnodes.
   assert errorKind in repSemKinds
   assert wrongNode != nil, "can't have a nil node for `wrongNode`"
   assert not report.isEmpty(), $report
@@ -81,6 +81,8 @@ proc newError*(
     typ: newType(tyError, ItemId(module: -2, item: -1), nil),
     reportId: report
   )
+
+  addInNimDebugUtilsError(conf, wrongNode, result)
 
   result.add #[ 0 ]# wrongNode # wrapped wrong node
   result.add #[ 1 ]# newIntNode(nkIntLit, ord(errorKind)) # errorKindPos
@@ -109,9 +111,8 @@ proc newError*(
     if posInfo == unknownLineInfo: wrongNode.info else: posInfo)
 
   let id = conf.addReport(tmp)
-  let r = conf.getReport(id)
   assert not id.isEmpty(), $id
-  newError(wrongNode, tmp.semReport.kind, id, inst, args)
+  newError(conf, wrongNode, tmp.semReport.kind, id, inst, args)
 
 template newError*(
     conf: ConfigRef,
@@ -129,6 +130,7 @@ template wrapErrorInSubTree*(conf: ConfigRef, wrongNodeContainer: PNode): PNode 
   var e = errorSubNode(wrongNodeContainer)
   assert e != nil, "there must be an error node within"
   newError(
+    conf,
     wrongNodeContainer,
     rsemWrappedError,
     conf.store reportSem(rsemWrappedError),
@@ -147,6 +149,7 @@ proc wrapIfErrorInSubTree*(conf: ConfigRef, wrongNodeContainer: PNode): PNode
       wrongNodeContainer
     else:
       newError(
+        conf,
         wrongNodeContainer,
         rsemWrappedError,
         conf.store reportSem(rsemWrappedError),

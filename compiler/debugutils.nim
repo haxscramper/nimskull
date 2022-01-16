@@ -160,9 +160,6 @@ template addInNimDebugUtils*(c: ConfigRef; action: string; n, r: PNode;
           kind: stepNodeFlagsToNode,
           flags: flags))), instLoc(instDepth))
 
-    template getInfo(): string =
-      c$n.info
-
     addInNimDebugUtilsAux(c, action, enterMsg, leaveMsg)
 
 template addInNimDebugUtils*(c: ConfigRef; action: string; n, r: PNode) =
@@ -191,6 +188,35 @@ template addInNimDebugUtils*(c: ConfigRef; action: string; n, r: PNode) =
           steppedFrom: calledFromInfo(),
           node: r,
           kind: stepNodeToNode))), instLoc(instDepth))
+
+    addInNimDebugUtilsAux(c, action, enterMsg, leaveMsg)
+
+template addInNimDebugUtilsError*(c: ConfigRef; n, e: PNode) =
+  ## add tracing error generation `PNode -> PNode`
+
+  when defined(nimDebugUtils):
+    const action = "newError"
+    template enterMsg(indentLevel: int) =
+      handleReport(c, wrap(instLoc(instDepth), DebugReport(
+        kind: rdbgTraceStep,
+        semstep: DebugSemStep(
+          direction: semstepEnter,
+          level: indentLevel,
+          name: action,
+          steppedFrom: calledFromInfo(),
+          node: n,
+          kind: stepWrongNode))), instLoc(instDepth))
+
+    template leaveMsg(indentLevel: int) =
+      handleReport(c, wrap(instLoc(instDepth), DebugReport(
+        kind: rdbgTraceStep,
+        semstep: DebugSemStep(
+          direction: semstepLeave,
+          level: indentLevel,
+          name: action,
+          steppedFrom: calledFromInfo(),
+          node: e,
+          kind: stepError))), instLoc(instDepth))
 
     addInNimDebugUtilsAux(c, action, enterMsg, leaveMsg)
 

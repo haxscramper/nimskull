@@ -1427,8 +1427,6 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
             msg
           )
 
-        var levelInc: seq[int]
-        var lastLevel = 0
         for part in r.sideEffectTrace:
           let s = part.isUnsafe
           let u = part.unsafeVia
@@ -2983,8 +2981,8 @@ proc reportShort*(conf: ConfigRef, r: ExternalReport): string {.inline.} =
   reportBody(conf, r)
 
 const
-  dropTraceExt = on
-  reportCaller = off
+  dropTraceExt = off
+  reportCaller = on
 
 proc reportBody*(conf: ConfigRef, r: DebugReport): string =
   assertKind r
@@ -3327,7 +3325,7 @@ proc rotatedTrace(conf: ConfigRef, r: Report) =
   # Dispatch each `{.define(nimCompilerDebug).}` section into separate file
   case r.kind:
     of rdbgTraceDefined, rdbgTraceStart:
-      if not existsDir(conf.getDefined(traceDir)):
+      if not dirExists(conf.getDefined(traceDir)):
         createDir conf.getDefined(traceDir)
 
       traceFile = open(conf.getDefined(traceDir) / $traceIndex, fmWrite)

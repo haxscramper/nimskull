@@ -11,7 +11,7 @@ import
   intsets, ast, astalgo, msgs, renderer, magicsys, types, idents, trees,
   wordrecg, strutils, options, guards, lineinfos, semfold, semdata,
   modulegraphs, varpartitions, typeallowed, nilcheck, tables, errorreporting,
-  errorhandling, reports
+  errorhandling, reports, debugutils
 
 when defined(useDfa):
   import dfa
@@ -1049,6 +1049,7 @@ proc allowCStringConv(n: PNode): bool =
   else: result = isCharArrayPtr(n.typ, false)
 
 proc track(tracked: PEffects, n: PNode) =
+  addInNimDebugUtils(tracked.config, "track " & $n.kind)
   case n.kind
   of nkSym:
     useVar(tracked, n)
@@ -1461,6 +1462,7 @@ proc hasRealBody(s: PSym): bool =
   result = {sfForward, sfImportc} * s.flags == {}
 
 proc trackProc*(c: PContext; s: PSym, body: PNode) =
+  addInNimDebugUtils(c.config, "trackProc")
   let g = c.graph
   var effects = s.typ.n[0]
   if effects.kind != nkEffectList: return

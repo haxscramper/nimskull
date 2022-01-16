@@ -1579,7 +1579,7 @@ proc typeMismatch*(
       typeMismatch: @[typeMismatch(conf, formal, actual)])
 
     assert not n.isNil, "Type mismatch requires non-nil AST for expression"
-    result = newError(n, rsemTypeMismatch, conf.store(info, rep), instLoc())
+    result = newError(conf, n, rsemTypeMismatch, conf.store(info, rep), instLoc())
     result.info = info
 
     # conf.localReport(result)

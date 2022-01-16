@@ -1461,6 +1461,8 @@ type
     stepNodeFlagsToNode
     stepNodeTypeToNode
     stepTypeTypeToType
+    stepWrongNode
+    stepError
     stepTrack
 
 
@@ -1471,7 +1473,7 @@ type
     node*: PNode
     steppedFrom*: ReportLineInfo
     case kind*: DebugSemStepKind
-      of stepNodeToNode, stepTrack:
+      of stepNodeToNode, stepTrack, stepWrongNode, stepError:
         discard
 
       of stepNodeTypeToNode, stepTypeTypeToType:
