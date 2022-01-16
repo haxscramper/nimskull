@@ -28,6 +28,9 @@ func wrap(
     style: set[Style] = {}
   ): string =
 
+  if str.len == 0: # don't bother with empty strings
+    return str
+
   result.add("\e[", color.int, "m")
   for s in style:
     result.add("\e[", s.int, "m")
@@ -2470,6 +2473,13 @@ const repWithPrefix = repAllKinds - standalone
 const repWithSuffix = repWarningKinds + repHintKinds - standalone
 const repWithLocation = repAllKinds - standalone
 
+func prefixShort(conf: ConfigRef, r: ReportTypes): string {.inline.} =
+  if r.kind in repWithPrefix:
+    # `Hint: `, `Error: ` etc.
+    reportTitles[conf.severity(r)]
+  else:
+    ""
+
 proc prefix(conf: ConfigRef, r: ReportTypes): string =
   let sev = conf.severity(r)
   if r.location.isSome() and r.kind in repWithLocation:
@@ -2478,14 +2488,20 @@ proc prefix(conf: ConfigRef, r: ReportTypes): string =
 
   if r.kind in repWithPrefix:
     # `Hint: `, `Error: ` etc.
-    result.add conf.wrap(reportTitles[sev], reportColors[sev])
+    result.add conf.wrap(prefixShort(conf, r), reportColors[sev])
+
+func suffixShort(conf: ConfigRef, r: ReportTypes): string {.inline.} =
+  if r.kind in repWithSuffix or conf.hasHint(rintErrKind):
+    " [" & $r.kind & "]"
+  else:
+    ""
 
 proc suffix(
     conf: ConfigRef,
     r: ReportTypes
   ): string =
   if r.kind in repWithSuffix or conf.hasHint(rintErrKind):
-    result.add conf.wrap(" [" & $r.kind & "]", fgCyan)
+    result.add conf.wrap(suffixShort(conf, r), fgCyan)
 
   if conf.hasHint(rintMsgOrigin):
     result.add(
@@ -2503,10 +2519,8 @@ proc suffix(
         conf.wrap("[MsgOrigin]", fgCyan)
       )
 
-
 proc reportFull*(conf: ConfigRef, r: SemReport): string =
   assertKind r
-  let sev = conf.severity(r)
 
   if r.kind == rsemProcessing and conf.hintProcessingDots:
     return "."
@@ -2517,6 +2531,15 @@ proc reportFull*(conf: ConfigRef, r: SemReport): string =
     reportBody(conf, r),
     conf.suffix(r)
   )
+
+proc reportShort*(conf: ConfigRef, r: SemReport): string =
+  # mostly created for nimsuggest
+  assertKind r
+  if r.kind == rsemProcessing and conf.hintProcessingDots:
+    "."
+  else:
+    reportBody(conf, r) & suffixShort(conf, r)
+
 
 proc reportBody*(conf: ConfigRef, r: ParserReport): string =
   assertKind r
@@ -2591,11 +2614,15 @@ proc reportBody*(conf: ConfigRef, r: ParserReport): string =
     of rparInvalidFilter:
       result = "?"
 
-
-
 proc reportFull*(conf: ConfigRef, r: ParserReport): string =
   assertKind r
   result = conf.prefix(r) & conf.reportBody(r) & conf.suffix(r)
+
+proc reportShort*(conf: ConfigRef, r: ParserReport): string =
+  # mostly created for nimsuggest
+  assertKind r
+  reportBody(conf, r) & suffixShort(conf, r)
+
 
 proc reportBody*(conf: ConfigRef, r: InternalReport): string =
   assertKind r
@@ -2775,6 +2802,14 @@ proc reportFull*(conf: ConfigRef, r: InternalReport): string =
     else:
       result = reportBody(conf, r)
 
+proc reportShort*(conf: ConfigRef, r: InternalReport): string =
+  # mostly created for nimsuggest
+  assertKind r
+  result = reportBody(conf, r)
+  if r.kind in {rintCannotOpenFile, rintWarnCannotOpenFile}:
+    result.add conf.suffixShort(r)
+
+
 proc reportBody*(conf: ConfigRef, r: LexerReport): string =
   assertKind r
   case LexerReportKind(r.kind):
@@ -2842,10 +2877,15 @@ proc reportBody*(conf: ConfigRef, r: LexerReport): string =
     of rlexSyntaxesCode:
       result.add "?"
 
-
 proc reportFull*(conf: ConfigRef, r: LexerReport): string    =
   assertKind r
   result.add(prefix(conf, r), reportBody(conf, r), suffix(conf, r))
+
+proc reportShort*(conf: ConfigRef, r: LexerReport): string =
+  # mostly created for nimsuggest
+  assertKind r
+  prefixShort(conf, r) & reportBody(conf, r) & suffixShort(conf, r)
+
 
 proc reportBody*(conf: ConfigRef, r: ExternalReport): string =
   assertKind r
@@ -2934,14 +2974,13 @@ proc reportBody*(conf: ConfigRef, r: ExternalReport): string =
     of rextPath:
       result = "added path: '$1'" % r.packagePath
 
-
-
-
-
 proc reportFull*(conf: ConfigRef, r: ExternalReport): string =
   assertKind r
   reportBody(conf, r)
 
+proc reportShort*(conf: ConfigRef, r: ExternalReport): string {.inline.} =
+  # mostly created for nimsuggest
+  reportBody(conf, r)
 
 const
   dropTraceExt = on
@@ -3070,8 +3109,6 @@ proc reportBody*(conf: ConfigRef, r: DebugReport): string =
         result.add(toStr(conf, e.info))
         result.add("\n")
 
-
-
 proc reportFull*(conf: ConfigRef, r: DebugReport): string =
   assertKind r
   case r.kind:
@@ -3080,6 +3117,13 @@ proc reportFull*(conf: ConfigRef, r: DebugReport): string =
 
     else:
       result = reportBody(conf, r)
+
+proc reportShort*(conf: ConfigRef, r: DebugReport): string =
+  # mostly created for nimsuggest
+  assertKind r
+  result = reportBody(conf, r)
+  if r.kind == rdbgCfgTrace:
+    result.add suffixShort(conf, r)
 
 proc reportBody*(conf: ConfigRef, r: BackendReport): string  =
   assertKind r
@@ -3167,7 +3211,6 @@ proc reportBody*(conf: ConfigRef, r: BackendReport): string  =
     of rbackCompiling:
       result = ""
 
-
 proc reportFull*(conf: ConfigRef, r: BackendReport): string =
   assertKind r
   case BackendReportKind(r.kind):
@@ -3181,6 +3224,15 @@ proc reportFull*(conf: ConfigRef, r: BackendReport): string =
 
     else:
       result = reportBody(conf, r)
+
+proc reportShort*(conf: ConfigRef, r: BackendReport): string =
+  # mostly created for nimsuggest
+  assertKind r
+  result = reportBody(conf, r)
+  if BackendReportKind(r.kind) in {rbackJsUnsupportedClosureIter,
+                                   rbackJsTooCaseTooLarge}:
+    result.add conf.suffixShort(r)
+
 
 proc reportBody*(conf: ConfigRef, r: CmdReport): string =
   assertKind r
@@ -3202,11 +3254,14 @@ proc reportBody*(conf: ConfigRef, r: CmdReport): string =
     of rcmdRunnableExamplesSuccess:
       result = "runnableExamples: " & r.msg
 
-
-
 proc reportFull*(conf: ConfigRef, r: CmdReport): string =
   assertKind r
   reportBody(conf, r)
+
+proc reportShort*(conf: ConfigRef, r: CmdReport): string {.inline.} =
+  # mostly created for nimsuggest
+  reportBody(conf, r)
+
 
 proc reportBody*(conf: ConfigRef, r: Report): string =
   assertKind r
@@ -3231,6 +3286,18 @@ proc reportFull*(conf: ConfigRef, r: Report): string =
     of repInternal: result = conf.reportFull(r.internalReport)
     of repBackend:  result = conf.reportFull(r.backendReport)
     of repExternal: result = conf.reportFull(r.externalReport)
+
+proc reportShort*(conf: ConfigRef, r: Report): string =
+  assertKind r
+  case r.category:
+    of repLexer:    result = conf.reportShort(r.lexReport)
+    of repParser:   result = conf.reportShort(r.parserReport)
+    of repCmd:      result = conf.reportShort(r.cmdReport)
+    of repSem:      result = conf.reportShort(r.semReport)
+    of repDebug:    result = conf.reportShort(r.debugReport)
+    of repInternal: result = conf.reportShort(r.internalReport)
+    of repBackend:  result = conf.reportShort(r.backendReport)
+    of repExternal: result = conf.reportShort(r.externalReport)
 
 var lastDot: bool = false
 

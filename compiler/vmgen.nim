@@ -1474,8 +1474,7 @@ proc cannotEval(c: PCtx; n: PNode) {.noinline.} =
   # https://github.com/nim-works/nimskull/pull/94#issuecomment-1006927599
   #
   # This code must not be reached
-  doAssert false
-
+  raiseRecoverableError("vmgen.cannotEval failed")
 
 proc isOwnedBy(a, b: PSym): bool =
   var a = a.owner
