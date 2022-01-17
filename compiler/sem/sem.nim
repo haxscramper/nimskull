@@ -668,15 +668,26 @@ proc isImportSystemStmt(g: ModuleGraph; n: PNode): bool =
         return true
   else: discard
 
-proc isEmptyTree(n: PNode): bool =
-  ## true if `n` is empty that shouldn't count as a top level statement
-  case n.kind
-  of nkStmtList:
-    for it in n:
-      if not isEmptyTree(it): return false
-    result = true
-  of nkEmpty, nkCommentStmt: result = true
-  else: result = false
+proc isEmptyTree*(n: PNode): bool =
+  ## true if `n` is empty that shouldn't count as a top level statement.
+  ## Explicit `Empty` nodes, nil nodes, comment statements and statement
+  ## lists with all nodes empty (checked recursively)
+  if n.isNil:
+    return true
+
+  else:
+    case n.kind
+    of nkStmtList:
+      for it in n:
+        if not isEmptyTree(it):
+          return false
+
+      result = true
+    of nkEmpty, nkCommentStmt:
+      result = true
+
+    else:
+      result = false
 
 proc semStmtAndGenerateGenerics(c: PContext, n: PNode): PNode =
   ## given top level statements from a module, carries out semantic analysis:

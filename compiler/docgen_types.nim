@@ -1,0 +1,406 @@
+import "."/[ast, passes, modulegraphs]
+
+import std/[options, intsets, tables]
+
+type
+  DocEntryKind* = enum
+    ## - NOTE :: Different procedure kinds are also used to describe
+    ##   operator implementations.
+    # procedure kinds start
+    ndkProc ## Procedure definition
+
+    ndkMacro ## Macro
+    ndkMethod ## Method
+    ndkTemplate ## \
+    ndkIterator ## \
+    ndkConverter ## User-defined implicit conversion
+    ndkParam ## Generic parameters
+    ndkArg ## Entry (function, procedure, macro, template) arguments
+    ndkInject ## Variable injected into the scope by template/macro
+              ## instantiation.
+    ndkPragma ## Compiler-specific directives `{.pragma.}` in nim,
+              ## `#pragma` in C++ and `#[(things)]` from rust.
+
+    # new type kinds start
+    ndkBuiltin ## Builtin type, not defined using any other types
+    ndkObject
+    ndkException ## Exception object
+    ndkDefect ## Nim defect object
+    ndkConcept ## General concept
+    ndkTypeclass
+    ndkUnion
+    ndkEnum ## Enumeration
+    ndkEffect ## Side effect tag
+    ndkAlias ## Typedef
+    ndkDistinctAlias ## strong typedef
+
+
+    # variable-like entries
+    ndkCompileDefine ## Compile-time `define` that might affect compilation
+                     ## of the program.
+
+    ndkGlobalConst ## Global immutable compile-time constant
+    ndkGlobalVar ## Global mutable variable
+    ndkGlobalLet ## Global immutable variable
+    ndkField ## object/struct field
+    ndkEnumField ## Enum field/constant
+    # end
+
+    ndkModule ## Module (C header file, nim/python/etc. module)
+    ndkFile ## Global or local file
+    ndkPackage ## System or programming language package (library). If
+               ## present used as toplevel grouping element.
+
+    ndkImport ## 'modern' import semantics
+    ndkInclude ## C-style text-based include
+    ndkDepend ## Interpackage dependency relations
+
+    ndkSchema ## Serialization schema
+
+
+  DocProcKind* = enum
+    dpkRegular
+    dpkOperator
+    dpkConstructor
+    dpkDestructor
+    dpkMoveOverride
+    dpkCopyOverride
+    dpkAsgnOverride
+    dpkPropertyGet
+    dpkPropertySet
+    dpkPredicate
+
+const
+  ndkStructKinds* = {
+    ndkObject, ndkDefect, ndkException, ndkEffect
+  }
+
+  ndkAliasKinds* = { ndkTypeclass, ndkAlias, ndkDistinctAlias }
+
+type
+  DocOccurKind* = enum
+    dokNone
+
+    dokTypeDirectUse ## Direct use of non-generic type
+    dokTypeAsParameterUse ## Use as a parameter in generic specialization
+    dokTypeSpecializationUse ## Specialization of generic type using other
+                             ## types
+
+    dokTypeAsArgUse
+    dokTypeAsReturnUse
+    dokTypeAsFieldUse
+    dokTypeConversionUse
+
+    dokUsage
+    dokCall
+
+    dokInheritFrom
+    dokOverride
+    dokInclude
+    dokImport
+    dokMacroUsage
+    dokAnnotationUsage
+
+    # local section start
+    dokLocalUse ## Generic 'use' of local entry
+    dokLocalWrite
+    dokLocalRead
+
+
+    # local declaration section start
+    dokLocalArgDecl
+    dokLocalVarDecl
+    # local declarations section end
+    # local section end
+
+    dokGlobalWrite ## Asign value to global variable
+    dokGlobalRead ## Non-asign form of global variable usage. Taking
+    ## address and mutating, passing to function that accepts `var`
+    ## parameter etc. would count as 'read' action.
+    dokGlobalDeclare
+
+    dokFieldUse
+    dokFieldSet
+    dokEnumFieldUse
+
+    dokFieldDeclare
+    dokCallDeclare
+    dokAliasDeclare
+    dokObjectDeclare
+    dokEnumDeclare
+    dokEnumFieldDeclare
+
+    dokDefineCheck
+
+    dokImported
+    dokExported
+    dokIncluded
+
+
+const
+  dokLocalKinds* = {dokLocalUse .. dokLocalArgDecl }
+  dokLocalDeclKinds* = { dokLocalArgDecl .. dokLocalVarDecl }
+
+type
+  DocId* = distinct int
+
+  DocOccur* = object
+    ## Single occurence of documentable entry. When DOD AST and token
+    ## storage is implemented
+    ## (https://github.com/nim-works/nimskull/discussions/113) this will be
+    ## replaced by extra data table associated with each token.
+    user*: Option[DocId] ## For occurence of global documentable
+    ## entry - lexically scoped parent (for function call - callee, for
+    ## type - parent composition). For local occurence - type of the
+    ## identifier (for local variables, arguments etc).
+    case kind*: DocOccurKind ## Type of entry occurence
+      of dokLocalKinds:
+        localId*: string
+        withInit*: bool ## For 'local decl' - whether identifier
+        ## was default-constructed or explicitly initialized.
+
+      else:
+        refid*: DocId ## Documentable entry id
+
+  DocCodeSlice* = object
+    line*: int ## Code slice line /index/
+    endLine*: Option[int]
+    column*: Slice[int]
+
+  DocCodePart* = object
+    ## Single code part with optional occurence link.
+    slice*: DocCodeSlice ## Single-line slice of the code
+    occur*: Option[DocOccur] ## 'link' to documentable entry
+
+  DocCodeLine* = object
+    lineHigh*: int ## /max index/ (not just length) for target
+                            ## code line
+    text*: string
+    parts*: seq[DocCodePart]
+    overlaps*: seq[DocCodePart] ## \
+    ##
+    ## - WHY :: sometimes it is not possible to reliably determine extent
+    ##   of the identifier, which leads to potentially overlapping code
+    ##   segments. Determining 'the correct' one is hardly possible, so
+    ##   they are just dumped in the overlapping section.
+    covPasses*: Option[int] ## Merge code coverage reports with
+    ## documentable database.
+
+  DocCode* = object
+    ## Block of source code with embedded occurence links.
+    codeLines*: seq[DocCodeLine]
+
+  DocTypeHeandkind* = enum
+    dthGenericParam ## Unresolved generic parameter
+    dthTypeclass ## Typeclass
+    dthConcreteType ## Concrete resolved class
+
+  DocIdentKind* = enum
+    diValue ## Pass-by value function argument or regular identifier
+    diPointer ## Identifier passed by pointer
+    diMutReference ## Mutable reference
+    diConstReference ## Immutable reference
+    diSink ## rvalue/sink parameters
+
+  DocIdent* = object
+    ## Identifier.
+    ##
+    ## - WHY :: Callback itself is represented as a type, but it is also
+    ##   possible to have named arguments for callback arguments (though
+    ##   this is not mandatory). @field{entry} should only point to
+    ##   documentable entry of kind [[code:ndkField]].
+
+    ident*: string ## Identifier name
+    kind*: DocIdentKind ##
+    identType*: PType ## Identifier type
+    value*: Option[string] ## Optional expression for initialization value
+    entry*: DocId
+
+  DocIdSet* = object
+    ids*: IntSet
+
+  DocIdTableN* = object
+    table*: Table[DocId, DocIdSet]
+
+  DocEntryGroup* = ref object
+    entries*: seq[DocEntry]
+    nested*: seq[DocEntryGroup]
+
+  DocPragma* = object
+    name*: string
+    entry*: DocId
+    args*: seq[DocCode]
+
+  DocExtent* = object
+    start*: TLineInfo
+    finish*: TLineInfo
+
+  DocText* = object
+    text*: string
+
+  DocVisibilityKind* = enum
+    dvkPrivate ## Not exported
+    dvkInternal ## Exported, but only for internal use
+    dvkPublic ## Exported, available for public use
+
+  DocRequires* = object
+    name*: string
+    version*: string # TODO expand
+    resolved*: Option[DocId]
+
+  DocEntry* = ref object
+    sym*: PSym
+    node*: PNode
+
+    location*: Option[TLineInfo]
+    extent*: Option[DocExtent]
+    declHeadExtent*: Option[DocExtent] ## Source code extent for
+    ## documentable entry 'head'. Points to single identifier - entry name
+    ## in declaration.
+    ## - WHY :: Used in sourcetrail
+    nested*: seq[DocId] ## Nested documentable entries. Not all
+    ## `DocEntryKind` is guaranteed to have one.
+
+    id*: DocId
+    db*: DocDb ## Parent documentable entry database
+
+    name*: string
+    visibility*: DocVisibilityKind
+    deprecatedMsg*: Option[string]
+
+    docText*: DocText
+
+    case kind*: DocEntryKind
+      of ndkPackage:
+        version*: string
+        author*: string
+        license*: string
+        requires*: seq[DocRequires]
+
+      of ndkModule:
+        imports*: DocIdSet
+        exports*: DocIdSet
+
+      of ndkStructKinds:
+        superTypes*: seq[DocId]
+
+      of ndkArg, ndkField:
+        identTypeStr*: Option[string]
+        identType*: Option[PType] ## Argument type description
+        identDefault*: Option[DocCode] ## Expression for argument default
+                                       ## value.
+      of ndkAliasKinds:
+        baseType*: PType
+
+      of ndkProc:
+        procKind*: DocProcKind
+        wrapOf*: Option[string]
+        dynlibOf*: Option[string]
+        calls*: DocIdSet ## Procedures called by entry
+        raises*: DocIdSet ## Full list of potential raises of a procedure
+        effects*: DocIdSet ## All effects for procedure body
+        raisesVia*: Table[DocId, DocIdSet] ## Mapping between particular
+        ## raise and called procedure. Direct raises via `raise` statement
+        ## are not listed here.
+        raisesDirect*: DocIdSet
+        effectsVia*: Table[DocId, DocIdSet] ## Effect -> called procMapping
+        globalIO*: DocIdSet ## Global variables that procedure reads from
+                            ## or writes into.
+
+      else:
+        discard
+
+  DocFile* = object
+    ## Processed code file
+    path*: FileIndex ## Absolute path to the original file
+    body*: DocCode ## Full text with [[code:DocOccur][occurrence]]
+                   ## annotations
+    moduleId*: Option[DocId]
+
+  DocDb* = ref object
+    entries*: seq[DocEntry]
+    files*: Table[FileIndex, DocFile]
+    currentTop*: DocEntry
+    top*: seq[DocId]
+    named*: Table[string, DocEntry]
+
+  DocContext* = ref object of PPassContext
+    db*: DocDb
+    sigmap*: TableRef[PSym, DocId]
+    graph*: ModuleGraph
+
+
+func `==`*(i1, i2: DocId): bool = i1.int == i2.int
+func isValid*(id: DocId): bool = (id.int != 0)
+
+func add*(db: var DocDb, entry: DocEntry): DocId =
+  result = db.entries.len.DocId()
+  db.entries.add entry
+  entry.db = db
+  entry.id = result
+
+proc addTop*(db: var DocDb, entry: DocEntry): DocId =
+  result = db.add entry
+  db.top.add result
+
+proc add*(de: DocEntry, other: DocEntry) = de.nested.add other.id
+proc add*(de: DocEntry, id: DocId) = de.nested.add id
+
+proc `[]`*(db: DocDb, entry: DocEntry): DocEntry = db.entries[entry.id.int]
+
+proc `[]`*(db: DocDb, id: DocId): DocEntry = db.entries[id.int]
+
+proc `[]`*(de: DocEntry, idx: int): DocEntry =
+  de.db.entries[de.nested[idx].int]
+
+func len*(s: DocIdSet): int = s.ids.len
+func incl*(s: var DocIdSet, id: DocId) =
+  if id.int != 0:
+    s.ids.incl id.int
+
+func `*`*(s1, s2: DocIdSet): DocIdSet = DocIdSet(ids: s1.ids * s2.ids)
+func `-`*(s1, s2: DocIdSet): DocIdSet = DocIdSet(ids: s1.ids - s2.ids)
+
+func excl*(s: var DocIdSet, id: DocId) = s.ids.excl id.int
+func contains*(s: DocIdSet, id: DocId): bool = id.int in s.ids
+iterator items*(s: DocIdSet): DocId =
+  for i in s.ids:
+    yield DocId(i)
+
+func pop*(s: var DocIdSet): DocId =
+  for it in s:
+    result = it
+    s.excl result
+
+func incl*(table: var DocIdTableN, idKey, idVal: DocId) =
+  table.table.mgetOrPut(idKey, DocIdSet()).incl idVal
+
+func incl*(s: var DocIdSet, entry: DocEntry) =
+  s.incl entry.id
+
+proc getSub*(parent: DocEntry, subName: string): DocId =
+  for sub in parent.nested:
+    if parent.db[sub].name == subName:
+      return sub
+
+proc newDocEntry*(
+      db: var DocDb, kind: DocEntryKind, name: string
+  ): DocEntry =
+  ## Create new toplevel entry (package, file, module) directly using DB.
+  result = DocEntry(db: db, name: name, kind: kind)
+  result.id = db.add(result)
+
+proc newDocEntry*(
+    parent: var DocEntry, kind: DocEntryKind, name: string
+  ): DocEntry =
+  ## Create new nested document entry. Add it to subnode of `parent` node.
+  result = DocEntry(db: parent.db, name: name, kind: kind)
+  result.id = parent.db.add(result)
+  parent.nested.add result.id
+
+proc getOrNew*(db: var DocDb, kind: DocEntryKind, name: string): DocEntry =
+  if name in db.named:
+    result = db.named[name]
+
+  else:
+    result = db.newDocEntry(kind, name)
