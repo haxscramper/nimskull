@@ -1,0 +1,35 @@
+wrap	cli_reporter.html#wrap,ConfigRef,string,ForegroundColor,set[Style]	cli_reporter: wrap(conf: ConfigRef; str: string; color: ForegroundColor;\n     style: set[Style] = {}): string	
+formatTrace	cli_reporter.html#formatTrace,ConfigRef,seq[StackTraceEntry]	cli_reporter: formatTrace(conf: ConfigRef; trace: seq[StackTraceEntry]): string	
+addPragmaAndCallConvMismatch	cli_reporter.html#addPragmaAndCallConvMismatch,string,PType,PType,ConfigRef	cli_reporter: addPragmaAndCallConvMismatch(message: var string; formal, actual: PType;\n                             conf: ConfigRef)	
+renderAsType	cli_reporter.html#renderAsType,IntSet,PType	cli_reporter: renderAsType(vals: IntSet; t: PType): string	
+getSymRepr	cli_reporter.html#getSymRepr,ConfigRef,PSym	cli_reporter: getSymRepr(conf: ConfigRef; s: PSym; getDeclarationPath = true): string	
+presentSpellingCandidates	cli_reporter.html#presentSpellingCandidates,ConfigRef,seq[SemSpellCandidate]	cli_reporter: presentSpellingCandidates(conf: ConfigRef; candidates: seq[SemSpellCandidate]): string	
+reportBody	cli_reporter.html#reportBody,ConfigRef,SemReport	cli_reporter: reportBody(conf: ConfigRef; r: SemReport): string	
+reportFull	cli_reporter.html#reportFull,ConfigRef,SemReport	cli_reporter: reportFull(conf: ConfigRef; r: SemReport): string	
+reportShort	cli_reporter.html#reportShort,ConfigRef,SemReport	cli_reporter: reportShort(conf: ConfigRef; r: SemReport): string	
+reportBody	cli_reporter.html#reportBody,ConfigRef,ParserReport	cli_reporter: reportBody(conf: ConfigRef; r: ParserReport): string	
+reportFull	cli_reporter.html#reportFull,ConfigRef,ParserReport	cli_reporter: reportFull(conf: ConfigRef; r: ParserReport): string	
+reportShort	cli_reporter.html#reportShort,ConfigRef,ParserReport	cli_reporter: reportShort(conf: ConfigRef; r: ParserReport): string	
+reportBody	cli_reporter.html#reportBody,ConfigRef,InternalReport	cli_reporter: reportBody(conf: ConfigRef; r: InternalReport): string	
+reportFull	cli_reporter.html#reportFull,ConfigRef,InternalReport	cli_reporter: reportFull(conf: ConfigRef; r: InternalReport): string	
+reportShort	cli_reporter.html#reportShort,ConfigRef,InternalReport	cli_reporter: reportShort(conf: ConfigRef; r: InternalReport): string	
+reportBody	cli_reporter.html#reportBody,ConfigRef,LexerReport	cli_reporter: reportBody(conf: ConfigRef; r: LexerReport): string	
+reportFull	cli_reporter.html#reportFull,ConfigRef,LexerReport	cli_reporter: reportFull(conf: ConfigRef; r: LexerReport): string	
+reportShort	cli_reporter.html#reportShort,ConfigRef,LexerReport	cli_reporter: reportShort(conf: ConfigRef; r: LexerReport): string	
+reportBody	cli_reporter.html#reportBody,ConfigRef,ExternalReport	cli_reporter: reportBody(conf: ConfigRef; r: ExternalReport): string	
+reportFull	cli_reporter.html#reportFull,ConfigRef,ExternalReport	cli_reporter: reportFull(conf: ConfigRef; r: ExternalReport): string	
+reportShort	cli_reporter.html#reportShort,ConfigRef,ExternalReport	cli_reporter: reportShort(conf: ConfigRef; r: ExternalReport): string	
+reportBody	cli_reporter.html#reportBody,ConfigRef,DebugReport	cli_reporter: reportBody(conf: ConfigRef; r: DebugReport): string	
+reportFull	cli_reporter.html#reportFull,ConfigRef,DebugReport	cli_reporter: reportFull(conf: ConfigRef; r: DebugReport): string	
+reportShort	cli_reporter.html#reportShort,ConfigRef,DebugReport	cli_reporter: reportShort(conf: ConfigRef; r: DebugReport): string	
+reportBody	cli_reporter.html#reportBody,ConfigRef,BackendReport	cli_reporter: reportBody(conf: ConfigRef; r: BackendReport): string	
+reportFull	cli_reporter.html#reportFull,ConfigRef,BackendReport	cli_reporter: reportFull(conf: ConfigRef; r: BackendReport): string	
+reportShort	cli_reporter.html#reportShort,ConfigRef,BackendReport	cli_reporter: reportShort(conf: ConfigRef; r: BackendReport): string	
+reportBody	cli_reporter.html#reportBody,ConfigRef,CmdReport	cli_reporter: reportBody(conf: ConfigRef; r: CmdReport): string	
+reportFull	cli_reporter.html#reportFull,ConfigRef,CmdReport	cli_reporter: reportFull(conf: ConfigRef; r: CmdReport): string	
+reportShort	cli_reporter.html#reportShort,ConfigRef,CmdReport	cli_reporter: reportShort(conf: ConfigRef; r: CmdReport): string	
+reportBody	cli_reporter.html#reportBody,ConfigRef,Report	cli_reporter: reportBody(conf: ConfigRef; r: Report): string	
+reportFull	cli_reporter.html#reportFull,ConfigRef,Report	cli_reporter: reportFull(conf: ConfigRef; r: Report): string	
+reportShort	cli_reporter.html#reportShort,ConfigRef,Report	cli_reporter: reportShort(conf: ConfigRef; r: Report): string	
+rdbgTracerKinds	cli_reporter.html#rdbgTracerKinds	cli_reporter: rdbgTracerKinds	
+reportHook	cli_reporter.html#reportHook,ConfigRef,Report	cli_reporter: reportHook(conf: ConfigRef; r: Report): TErrorHandling	

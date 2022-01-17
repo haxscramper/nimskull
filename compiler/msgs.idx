@@ -1,0 +1,76 @@
+instLoc	msgs.html#instLoc.t,int	msgs: instLoc(depth: int = -2): InstantiationInfo	
+flushDot	msgs.html#flushDot,ConfigRef	msgs: flushDot(conf: ConfigRef)	
+toCChar	msgs.html#toCChar,char,string	msgs: toCChar(c: char; result: var string)	
+makeCString	msgs.html#makeCString,string	msgs: makeCString(s: string): Rope	
+fileInfoKnown	msgs.html#fileInfoKnown,ConfigRef,AbsoluteFile	msgs: fileInfoKnown(conf: ConfigRef; filename: AbsoluteFile): bool	
+fileInfoIdx	msgs.html#fileInfoIdx,ConfigRef,AbsoluteFile,bool	msgs: fileInfoIdx(conf: ConfigRef; filename: AbsoluteFile; isKnownFile: var bool): FileIndex	
+fileInfoIdx	msgs.html#fileInfoIdx,ConfigRef,AbsoluteFile	msgs: fileInfoIdx(conf: ConfigRef; filename: AbsoluteFile): FileIndex	
+newLineInfo	msgs.html#newLineInfo,FileIndex,int,int	msgs: newLineInfo(fileInfoIdx: FileIndex; line, col: int): TLineInfo	
+newLineInfo	msgs.html#newLineInfo,ConfigRef,AbsoluteFile,int,int	msgs: newLineInfo(conf: ConfigRef; filename: AbsoluteFile; line, col: int): TLineInfo	
+gCmdLineInfo	msgs.html#gCmdLineInfo	msgs: gCmdLineInfo	
+suggestWriteln	msgs.html#suggestWriteln,ConfigRef,string	msgs: suggestWriteln(conf: ConfigRef; s: string)	
+msgQuit	msgs.html#msgQuit,int8	msgs: msgQuit(x: int8)	
+msgQuit	msgs.html#msgQuit,string	msgs: msgQuit(x: string)	
+suggestQuit	msgs.html#suggestQuit	msgs: suggestQuit()	
+ColOffset	msgs.html#ColOffset	msgs: ColOffset	
+commandLineDesc	msgs.html#commandLineDesc	msgs: commandLineDesc	
+getInfoContextLen	msgs.html#getInfoContextLen,ConfigRef	msgs: getInfoContextLen(conf: ConfigRef): int	
+setInfoContextLen	msgs.html#setInfoContextLen,ConfigRef,int	msgs: setInfoContextLen(conf: ConfigRef; L: int)	
+pushInfoContext	msgs.html#pushInfoContext,ConfigRef,TLineInfo,PSym	msgs: pushInfoContext(conf: ConfigRef; info: TLineInfo; detail: PSym = nil)	
+popInfoContext	msgs.html#popInfoContext,ConfigRef	msgs: popInfoContext(conf: ConfigRef)	
+getInfoContext	msgs.html#getInfoContext,ConfigRef,int	msgs: getInfoContext(conf: ConfigRef; index: int): TLineInfo	
+toFilename	msgs.html#toFilename.t,ConfigRef,FileIndex	msgs: toFilename(conf: ConfigRef; fileIdx: FileIndex): string	
+toProjPath	msgs.html#toProjPath,ConfigRef,FileIndex	msgs: toProjPath(conf: ConfigRef; fileIdx: FileIndex): string	
+toFullPath	msgs.html#toFullPath,ConfigRef,FileIndex	msgs: toFullPath(conf: ConfigRef; fileIdx: FileIndex): string	
+toReportLineInfo	msgs.html#toReportLineInfo,ConfigRef,TLineInfo	msgs: toReportLineInfo(conf: ConfigRef; info: TLineInfo): ReportLineInfo	
+setDirtyFile	msgs.html#setDirtyFile,ConfigRef,FileIndex,AbsoluteFile	msgs: setDirtyFile(conf: ConfigRef; fileIdx: FileIndex; filename: AbsoluteFile)	
+setHash	msgs.html#setHash,ConfigRef,FileIndex,string	msgs: setHash(conf: ConfigRef; fileIdx: FileIndex; hash: string)	
+getHash	msgs.html#getHash,ConfigRef,FileIndex	msgs: getHash(conf: ConfigRef; fileIdx: FileIndex): string	
+toFullPathConsiderDirty	msgs.html#toFullPathConsiderDirty,ConfigRef,FileIndex	msgs: toFullPathConsiderDirty(conf: ConfigRef; fileIdx: FileIndex): AbsoluteFile	
+toFilename	msgs.html#toFilename.t,ConfigRef,TLineInfo	msgs: toFilename(conf: ConfigRef; info: TLineInfo): string	
+toProjPath	msgs.html#toProjPath.t,ConfigRef,TLineInfo	msgs: toProjPath(conf: ConfigRef; info: TLineInfo): string	
+toFullPath	msgs.html#toFullPath.t,ConfigRef,TLineInfo	msgs: toFullPath(conf: ConfigRef; info: TLineInfo): string	
+toFullPathConsiderDirty	msgs.html#toFullPathConsiderDirty.t,ConfigRef,TLineInfo	msgs: toFullPathConsiderDirty(conf: ConfigRef; info: TLineInfo): string	
+toFilenameOption	msgs.html#toFilenameOption,ConfigRef,FileIndex,FilenameOption	msgs: toFilenameOption(conf: ConfigRef; fileIdx: FileIndex; opt: FilenameOption): string	
+toMsgFilename	msgs.html#toMsgFilename,ConfigRef,FileIndex	msgs: toMsgFilename(conf: ConfigRef; fileIdx: FileIndex): string	
+toMsgFilename	msgs.html#toMsgFilename.t,ConfigRef,TLineInfo	msgs: toMsgFilename(conf: ConfigRef; info: TLineInfo): string	
+toLinenumber	msgs.html#toLinenumber,TLineInfo	msgs: toLinenumber(info: TLineInfo): int	
+toColumn	msgs.html#toColumn,TLineInfo	msgs: toColumn(info: TLineInfo): int	
+toFileLineCol	msgs.html#toFileLineCol,ConfigRef,TLineInfo	msgs: toFileLineCol(conf: ConfigRef; info: TLineInfo): string	
+toReportPoint	msgs.html#toReportPoint,ConfigRef,TLineInfo	msgs: toReportPoint(conf: ConfigRef; info: TLineInfo): ReportLineInfo	
+`$`	msgs.html#$,ConfigRef,TLineInfo	msgs: `$`(conf: ConfigRef; info: TLineInfo): string	
+`$`	msgs.html#$,TLineInfo	msgs: `$`(info: TLineInfo): string	
+`??`	msgs.html#??,ConfigRef,TLineInfo,string	msgs: `??`(conf: ConfigRef; info: TLineInfo; filename: string): bool	
+msgWrite	msgs.html#msgWrite,ConfigRef,string,MsgFlags	msgs: msgWrite(conf: ConfigRef; s: string; flags: MsgFlags = {})	
+log	msgs.html#log,string	msgs: log(s: string)	
+`==`	msgs.html#==,TLineInfo,TLineInfo	msgs: `==`(a, b: TLineInfo): bool	
+exactEquals	msgs.html#exactEquals,TLineInfo,TLineInfo	msgs: exactEquals(a, b: TLineInfo): bool	
+getContext	msgs.html#getContext,ConfigRef,TLineInfo	msgs: getContext(conf: ConfigRef; lastinfo: TLineInfo): seq[ReportContext]	
+numLines	msgs.html#numLines,ConfigRef,FileIndex	msgs: numLines(conf: ConfigRef; fileIdx: FileIndex): int	
+sourceLine	msgs.html#sourceLine,ConfigRef,TLineInfo	msgs: sourceLine(conf: ConfigRef; i: TLineInfo): string	
+handleReport	msgs.html#handleReport,ConfigRef,Report,InstantiationInfo,TErrorHandling	msgs: handleReport(conf: ConfigRef; report: Report; reportFrom: InstantiationInfo;\n             eh: TErrorHandling = doNothing)	
+handleReport	msgs.html#handleReport,ConfigRef,ReportId,InstantiationInfo,TErrorHandling	msgs: handleReport(conf: ConfigRef; id: ReportId; reportFrom: InstantiationInfo;\n             eh: TErrorHandling = doNothing)	
+globalAssert	msgs.html#globalAssert.t,ConfigRef,untyped,TLineInfo,string	msgs: globalAssert(conf: ConfigRef; cond: untyped; info: TLineInfo = unknownLineInfo;\n             arg = &quot;&quot;)	
+globalReport	msgs.html#globalReport.t,ConfigRef,TLineInfo,ReportTypes	msgs: globalReport(conf: ConfigRef; info: TLineInfo; report: ReportTypes)	
+globalReport	msgs.html#globalReport.t,ConfigRef,ReportTypes	msgs: globalReport(conf: ConfigRef; report: ReportTypes)	
+localReport	msgs.html#localReport.t,ConfigRef,TLineInfo,ReportTypes	msgs: localReport(conf: ConfigRef; info: TLineInfo; report: ReportTypes)	
+localReport	msgs.html#localReport.t,ConfigRef,TLineInfo,ReportTypes_2	msgs: localReport(conf: ConfigRef; info: TLineInfo; report: ReportTypes)	
+localReport	msgs.html#localReport.t,ConfigRef,PNode,SemReport	msgs: localReport(conf: ConfigRef; node: PNode; report: SemReport)	
+temporaryStringError	msgs.html#temporaryStringError,ConfigRef,TLineInfo,string	msgs: temporaryStringError(conf: ConfigRef; info: TLineInfo; text: string)	
+localReport	msgs.html#localReport.t,ConfigRef,ReportTypes	msgs: localReport(conf: ConfigRef; report: ReportTypes)	
+localReport	msgs.html#localReport.t,ConfigRef,Report	msgs: localReport(conf: ConfigRef; report: Report)	
+semReportCountMismatch	msgs.html#semReportCountMismatch,ReportKind,,,PNode	msgs: semReportCountMismatch(kind: ReportKind; expected, got: distinct SomeInteger;\n                       node: PNode = nil): SemReport	
+semReportIllformedAst	msgs.html#semReportIllformedAst.t,ConfigRef,PNode,string	msgs: semReportIllformedAst(conf: ConfigRef; node: PNode; explain: string): untyped	
+joinAnyOf	msgs.html#joinAnyOf,seq[T],bool	msgs: joinAnyOf[T](values: seq[T]; quote: bool = false): string	
+semReportIllformedAst	msgs.html#semReportIllformedAst.t,ConfigRef,PNode,set[TNodeKind]	msgs: semReportIllformedAst(conf: ConfigRef; node: PNode; expected: set[TNodeKind]): untyped	
+localReport	msgs.html#localReport.t,ConfigRef,TLineInfo,ReportTypes_3	msgs: localReport(conf: ConfigRef; info: TLineInfo; report: ReportTypes)	
+internalAssert	msgs.html#internalAssert.t,ConfigRef,bool,string	msgs: internalAssert(conf: ConfigRef; e: bool; failMsg: string = &quot;&quot;)	
+internalError	msgs.html#internalError.t,ConfigRef,InternalReportKind,string	msgs: internalError(conf: ConfigRef; repKind: InternalReportKind; fail: string): untyped	
+internalError	msgs.html#internalError.t,ConfigRef,TLineInfo,InternalReportKind,string	msgs: internalError(conf: ConfigRef; info: TLineInfo; repKind: InternalReportKind;\n              fail: string): untyped	
+internalError	msgs.html#internalError.t,ConfigRef,TLineInfo,string	msgs: internalError(conf: ConfigRef; info: TLineInfo; fail: string): untyped	
+internalError	msgs.html#internalError.t,ConfigRef,string	msgs: internalError(conf: ConfigRef; fail: string): untyped	
+quotedFilename	msgs.html#quotedFilename,ConfigRef,TLineInfo	msgs: quotedFilename(conf: ConfigRef; i: TLineInfo): Rope	
+listWarnings	msgs.html#listWarnings,ConfigRef	msgs: listWarnings(conf: ConfigRef)	
+listHints	msgs.html#listHints,ConfigRef	msgs: listHints(conf: ConfigRef)	
+uniqueModuleName	msgs.html#uniqueModuleName,ConfigRef,FileIndex	msgs: uniqueModuleName(conf: ConfigRef; fid: FileIndex): string	
+genSuccessX	msgs.html#genSuccessX,ConfigRef	msgs: genSuccessX(conf: ConfigRef)	

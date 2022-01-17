@@ -1,0 +1,2 @@
+errorHandling	errorreporting.html#errorHandling,PNode	errorreporting: errorHandling(err: PNode): TErrorHandling	
+localReport	errorreporting.html#localReport.t,ConfigRef,PNode	errorreporting: localReport(conf: ConfigRef; node: PNode)	

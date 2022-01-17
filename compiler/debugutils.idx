@@ -1,0 +1,7 @@
+isCompilerDebug	debugutils.html#isCompilerDebug,ConfigRef	debugutils: isCompilerDebug(conf: ConfigRef): bool	
+addInNimDebugUtils	debugutils.html#addInNimDebugUtils.t,ConfigRef,string,PNode,PNode,TExprFlags	debugutils: addInNimDebugUtils(c: ConfigRef; action: string; n, r: PNode; flags: TExprFlags)	
+addInNimDebugUtils	debugutils.html#addInNimDebugUtils.t,ConfigRef,string,PNode,PNode	debugutils: addInNimDebugUtils(c: ConfigRef; action: string; n, r: PNode)	
+addInNimDebugUtilsError	debugutils.html#addInNimDebugUtilsError.t,ConfigRef,PNode,PNode	debugutils: addInNimDebugUtilsError(c: ConfigRef; n, e: PNode)	
+addInNimDebugUtils	debugutils.html#addInNimDebugUtils.t,ConfigRef,string,PNode,PType,PType	debugutils: addInNimDebugUtils(c: ConfigRef; action: string; n: PNode; prev, r: PType)	
+addInNimDebugUtils	debugutils.html#addInNimDebugUtils.t,ConfigRef,string,PType,PType,PType	debugutils: addInNimDebugUtils(c: ConfigRef; action: string; x, y, r: PType)	
+addInNimDebugUtils	debugutils.html#addInNimDebugUtils.t,ConfigRef,string	debugutils: addInNimDebugUtils(c: ConfigRef; action: string)	

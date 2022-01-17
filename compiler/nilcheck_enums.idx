@@ -1,0 +1,16 @@
+TArg	nilcheck_enums.html#TArg	NilTransition.TArg	
+TAssign	nilcheck_enums.html#TAssign	NilTransition.TAssign	
+TType	nilcheck_enums.html#TType	NilTransition.TType	
+TNil	nilcheck_enums.html#TNil	NilTransition.TNil	
+TVarArg	nilcheck_enums.html#TVarArg	NilTransition.TVarArg	
+TResult	nilcheck_enums.html#TResult	NilTransition.TResult	
+TSafe	nilcheck_enums.html#TSafe	NilTransition.TSafe	
+TPotentialAlias	nilcheck_enums.html#TPotentialAlias	NilTransition.TPotentialAlias	
+TDependant	nilcheck_enums.html#TDependant	NilTransition.TDependant	
+NilTransition	nilcheck_enums.html#NilTransition	nilcheck_enums: NilTransition	
+Parent	nilcheck_enums.html#Parent	Nilability.Parent	
+Safe	nilcheck_enums.html#Safe	Nilability.Safe	
+MaybeNil	nilcheck_enums.html#MaybeNil	Nilability.MaybeNil	
+Nil	nilcheck_enums.html#Nil	Nilability.Nil	
+Unreachable	nilcheck_enums.html#Unreachable	Nilability.Unreachable	
+Nilability	nilcheck_enums.html#Nilability	nilcheck_enums: Nilability	
