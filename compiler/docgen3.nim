@@ -1,9 +1,9 @@
 import "."/[
   semdata,
   sem,
+  astalgo,
   types,
   trees,
-  sighashes,
   modulegraphs,
   ast,
   passes,
@@ -228,14 +228,33 @@ proc getEntryName(node: PNode): tuple[exported: bool, name: PNode] =
       result.name = node[1]
       result.exported = true
 
-    of nkIdentDefs:
+    of nkIdentDefs, nkTypeDef, nkConstDef, nkProcDeclKinds:
       result = getEntryName(node[0])
 
     else:
       result.name = node
 
+  if result.name.kind notin {nkIdent, nkSym}:
+    debug node
+    assert false, $node.kind
+
+proc getBaseType*(node: PNode): PNode =
+  case node.kind:
+    of nkRefTy, nkPtrTy:
+      result = getBaseType(node[0])
+
+    of nkObjectTy:
+      result = getBaseType(node[1])
+
+    of nkOfInherit:
+      result = node[0]
+
+    else:
+      discard
+
+  assert result.isNil() or result.kind in {nkSym}
+
 proc getPragmas(node: PNode): seq[PNode] =
-  {.warning: "TODO merge with `getPragma` overload above".}
   case node.kind:
     of nkIdent, nkSym, nkEmpty:
       discard
@@ -281,6 +300,10 @@ proc getPragmas(n: PNode, name: seq[string]): seq[PNode] =
           assert false, $pragma[0].kind
 
 
+proc todo(node: PNode, str: string) =
+  debug node
+  assert false, str & " " & $node.kind
+
 proc classifyDeclKind(ctx: DocContext, decl: PNode): DocEntryKind =
   case decl.kind:
     of nkProcDef:      result = ndkProc
@@ -291,19 +314,38 @@ proc classifyDeclKind(ctx: DocContext, decl: PNode): DocEntryKind =
     of nkFuncDef:      result = ndkFunc
     of nkConverterDef: result = ndkConverter
     of nkTypeDef:
-      let name: string = decl.getEntryName().name.getStrVal()
-      case name:
-        of "CatchableError": result = ndkException
-        of "Defect":         result = ndkDefect
-        of "RootEffect":     result = ndkEffect
+      case decl[2].kind:
+        of nkObjectTy, nkRefTy, nkPtrTy:
+          let name: string = decl.getEntryName().name.getStrVal()
+          case name:
+            of "CatchableError": result = ndkException
+            of "Defect":         result = ndkDefect
+            of "RootEffect":     result = ndkEffect
+            else:
+              let base = getBaseType(decl)
+              if decl[2].kind in {nkRefTy, nkPtrTy} and
+                 decl[2][0].kind notin {nkObjectTy}:
+                # `P = ref T` or `P = pre T`
+                result = ndkAlias
+
+              elif base.isNil():
+                result = ndkObject
+
+              else:
+                result = ctx.db[ctx[base]].kind
+
+        of nkInfix:
+          result = ndkTypeclass
+
+        of nkSym, nkBracketExpr, nkProcTy, nkTupleTy:
+          # `A = B`, `A = B[C]`, `A = proc()`, `A = tuple[]`
+          result = ndkAlias
+
         else:
-          assert false, "TODO find superclass node"
-          let decl: PNode = nil
-          if not decl.isEmptyTree():
-            result = ctx.db[ctx[decl]].kind
+          decl[2].todo "type definition"
 
     else:
-      assert false, "TODO"
+      decl.todo "??"
 
 proc registerDeprecated(entry: var DocEntry, node: PNode) =
   let depr = node.getPragmas(@["deprecated"])
@@ -351,11 +393,9 @@ proc registerProcDef(ctx: DocContext, procDef: PNode) =
   # entry.docText.text.add procDef.docComment
 
   for argument in procDef[paramsPos][1 ..^ 1]:
-    for ident in argument[0 ..^ 2]:
+    for ident in argument[0 ..^ 3]:
       var arg = entry.newDocEntry(ndkArg, ident.getStrVal())
       arg.sym = ident.sym
-      {.hint: "TODO extract ident location".}
-      # ctx.setLocation(arg, ident)
 
 proc registerProcBody(
     ctx: DocContext, body: PNode, state: RegisterState, node: PNode) =
@@ -372,12 +412,14 @@ proc registerProcBody(
 
   if not mainRaise.isNil:
     for r in mainRaise:
-      main.raises.incl ctx[exprTypeSym(r)]
-      let callSym = headSym(r)
-      if not isNil(callSym) and callSym.kind in skProcDeclKinds:
-        # For `openarray[T]` `headSym` returns type symbol, but we are only
-        # concerned with calls to other procedures here.
-        main.raisesVia[ctx[callSym]] = DocIdSet()
+      let sym = exprTypeSym(r)
+      if not sym.isNil():
+        main.raises.incl ctx[sym]
+        let callSym = headSym(r)
+        if not isNil(callSym) and callSym.kind in skProcDeclKinds:
+          # For `openarray[T]` `headSym` returns type symbol, but we are only
+          # concerned with calls to other procedures here.
+          main.raisesVia[ctx[callSym]] = DocIdSet()
 
   if not mainEffect.isNil:
     for e in mainEffect:
@@ -700,7 +742,11 @@ proc impl(
         elif node.isEnum():    rskEnumHeader
         else:                  rskTypeHeader
 
+      var state = state
       result = ctx.impl(node[0], state + decl, node)
+      if state.user.isNone():
+        state.user = result
+
       ctx.impl(node[1], state + decl + result, node)
       ctx.impl(node[2], state + result, node)
 
@@ -752,6 +798,7 @@ proc registerUses(ctx: DocContext, node: PNode, state: RegisterState) =
 
 proc registerTypeDef(ctx: DocContext, node: PNode) =
   let (exported, name) = getEntryName(node)
+  echo "registered ", name
   if node.kind == nkTypeDef and (
      node[2].kind == nkObjectTy or (
       node[2].kind in {nkPtrTy, nkRefTy} and
@@ -922,9 +969,6 @@ proc registerTopLevel(ctx: DocContext, node: PNode) =
   ctx.registerUses(node, state)
 
 
-proc registerDocs*(ctx: DocContext, node: PNode) =
-  discard
-
 proc semDocPassOpen*(
     graph: ModuleGraph; module: PSym; idgen: IdGenerator
   ): PPassContext =
@@ -935,7 +979,11 @@ proc semDocPassOpen*(
 proc setupDocPasses(graph: ModuleGraph): DocDb =
   ## Setup necessary context (semantic and docgen passes) for module graph
   var db {.global.}: DocDb
+  var sigmap {.global.}: TableRef[PSym, DocId]
+
+  sigmap = newTable[PSym, DocId]()
   db = DocDb()
+
   registerPass(graph, makePass(
     # Largely identical to the regular `sem.semPass`, with only exception
     # of the extended sem doc pass context usage.
@@ -945,7 +993,10 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
   registerPass(graph, makePass(
     TPassOpen(
       proc(graph: ModuleGraph, module: PSym, idgen: IdGenerator): PPassContext {.nimcall.} =
-        var context = DocContext(db: db)
+        var context = DocContext(db: db, sigmap: sigmap, graph: graph)
+        context.module = newDocEntry(db, ndkModule, module.name.s)
+        context.module.visibility = dvkPublic
+        sigmap[module] = context.module.id
 
         return context
     ),
@@ -954,7 +1005,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
         # No node modifications is performed here, only analyzing nodes.
         result = n
         var ctx = DocContext(c)
-        registerDocs(ctx, n)
+        registerTopLevel(ctx, n)
     ),
     TPassClose(
       proc(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =

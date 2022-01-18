@@ -15,6 +15,9 @@ type
     ndkTemplate ## \
     ndkIterator ## \
     ndkConverter ## User-defined implicit conversion
+    # procedure kinds end
+
+
     ndkParam ## Generic parameters
     ndkArg ## Entry (function, procedure, macro, template) arguments
     ndkInject ## Variable injected into the scope by template/macro
@@ -71,11 +74,14 @@ type
     dpkPropertySet
     dpkPredicate
 
+
+
 const
   ndkStructKinds* = {
     ndkObject, ndkDefect, ndkException, ndkEffect
   }
 
+  ndkProcKinds* = { ndkProc .. ndkConverter }
   ndkAliasKinds* = { ndkTypeclass, ndkAlias, ndkDistinctAlias }
 
 type
@@ -293,7 +299,7 @@ type
       of ndkAliasKinds:
         baseType*: PType
 
-      of ndkProc:
+      of ndkProcKinds:
         procKind*: DocProcKind
         wrapOf*: Option[string]
         dynlibOf*: Option[string]

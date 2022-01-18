@@ -278,7 +278,9 @@ proc newCodeBlock*(text: seq[string]): DocCode =
 
 proc newDocFile*(ctx: DocContext, file: FileIndex): DocFile =
   result.path = file
-  for idx, line in ctx.graph.config.m.fileInfos[file.int].lines:
+  for idx, line in enumerate(lines(
+    ctx.graph.config.m.fileInfos[file.int].fullPath.string
+  )):
     result.body.add newCodeLine(idx + 1, line)
 
 proc nodeSlice(node: PNode): DocCodeSlice =
