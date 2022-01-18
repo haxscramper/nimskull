@@ -94,6 +94,8 @@ type
     of importExcept:
       exceptSet*: IntSet         # of PIdent.id
 
+  SemExpandHook* = proc(context: PContext, expr: PNode, sym: PSym)
+
   PContext* = ref TContext
 
   # Refactoring of `TContext` in progress:
@@ -689,7 +691,7 @@ type
       preMacro,
       postMacro,
       preTemplate,
-      postTemplate: proc(context: PContext, expr: PNode, sym: PSym)
+      postTemplate: SemExpandHook
     ] ## Optional hooks to call before/after macro/template expansion is
       ## called. Necessary for user-provided extensions for the macro
       ## expansion logging. Post-expand hooks are called after

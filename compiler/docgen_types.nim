@@ -1,4 +1,4 @@
-import "."/[ast, passes, modulegraphs]
+import "."/[ast, passes, modulegraphs, semdata]
 
 import std/[options, intsets, tables]
 
@@ -150,6 +150,15 @@ const
 
 type
   DocId* = distinct int
+  ExpansionId* = distinct int
+  ExpansionData* = object
+    ## Information about macro or template expansion
+    expansionOf*: PSym ## Expanded symbol
+    expandDepth*: int ## Current active macro/template expansion depth
+    expandedFrom*: PNode ## Original expression that node expanded from
+    resultNode*: PNode ## Resulting expanded node
+    expansionUser*: DocId ## Parent documentable entry that contained macro
+    ## expansion (for toplevel entries it is a module)
 
   DocOccur* = object
     ## Single occurence of documentable entry. When DOD AST and token
@@ -160,6 +169,7 @@ type
     ## entry - lexically scoped parent (for function call - callee, for
     ## type - parent composition). For local occurence - type of the
     ## identifier (for local variables, arguments etc).
+    inExpansionOf*: Option[ExpansionId]
     case kind*: DocOccurKind ## Type of entry occurence
       of dokLocalKinds:
         localId*: string
@@ -330,12 +340,21 @@ type
     currentTop*: DocEntry
     top*: seq[DocId]
     named*: Table[string, DocEntry]
+    expansions*: seq[ExpansionData] ## List of known expansion bettween
+    ## open/close for module
 
-  DocContext* = ref object of PPassContext
+  DocContext* = ref object of PContext
     db*: DocDb
     sigmap*: TableRef[PSym, DocId]
-    graph*: ModuleGraph
-    module*: DocEntry
+    docModule*: DocEntry
+    activeUser*: DocId ## Current active user for macro expansion
+                       ## occurencies
+    activeExpansion*: ExpansionId
+    expanded*: ref IntSet
+    expansionStack*: seq[int] ## Intermediate location for expansion data
+    ## store - when expansion is closed it is moved to `db.expansion`
+    firstExpansion*: int ## Index of the first item for current open/close
+    ## processing run.
 
 
 func `==`*(i1, i2: DocId): bool = i1.int == i2.int

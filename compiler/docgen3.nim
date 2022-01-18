@@ -14,13 +14,14 @@ import "."/[
   renderer
 ]
 
-import std/[options, tables, hashes, strutils]
+import std/[options, tables, hashes, strutils, intsets]
 
+static:
+  assert(
+    defined(useNodeIds),
+    "Documentation generator requires node ids to be enabled")
 
 type
-  DocSemContext* = ref object of PContext
-    ## Extended semantic pass context used for documentation generation.
-
   RegisterStateKind = enum
     rskTopLevel
     rskInheritList
@@ -359,7 +360,8 @@ proc registerDeprecated(entry: var DocEntry, node: PNode) =
 
 proc registerProcDef(ctx: DocContext, procDef: PNode) =
   let (exported, name) = getEntryName(procDef)
-  var entry = ctx.module.newDocEntry(
+  ctx.activeUser = ctx[name.sym]
+  var entry = ctx.docModule.newDocEntry(
     ctx.classifyDeclKind(procDef), name.getStrVal())
 
   entry.sym = name.sym
@@ -490,6 +492,10 @@ proc impl(
     state: RegisterState,
     parent: PNode
   ): Option[DocId] {.discardable.} =
+
+  if node.id in ctx.expanded[]:
+    return
+
   case node.kind:
     of nkSym:
       case node.sym.kind:
@@ -798,12 +804,13 @@ proc registerUses(ctx: DocContext, node: PNode, state: RegisterState) =
 
 proc registerTypeDef(ctx: DocContext, node: PNode) =
   let (exported, name) = getEntryName(node)
+  ctx.activeUser = ctx[name.sym]
   echo "registered ", name
   if node.kind == nkTypeDef and (
      node[2].kind == nkObjectTy or (
       node[2].kind in {nkPtrTy, nkRefTy} and
       node[2][0].kind == nkObjectTy)):
-    var entry = ctx.module.newDocEntry(
+    var entry = ctx.docModule.newDocEntry(
       ctx.classifyDeclKind(node), name.getStrVal())
 
     when false:
@@ -839,7 +846,7 @@ proc registerTypeDef(ctx: DocContext, node: PNode) =
         ctx.addSigmap(nimField.declNode.get(), field)
 
   elif node[2].kind == nkEnumTy:
-    var entry = ctx.module.newDocEntry(ndkEnum, name.getStrVal())
+    var entry = ctx.docModule.newDocEntry(ndkEnum, name.getStrVal())
 
     when false:
       entry.setDeprecated(node)
@@ -869,7 +876,7 @@ proc registerTypeDef(ctx: DocContext, node: PNode) =
       classifyDeclKind(ctx, node)
     )
 
-    var entry = ctx.module.newDocEntry(kind, name.getStrVal())
+    var entry = ctx.docModule.newDocEntry(kind, name.getStrVal())
     entry.sym = name.sym
 
     if exported:
@@ -885,7 +892,7 @@ proc registerTypeDef(ctx: DocContext, node: PNode) =
 
 
   elif node[0].kind in {nkPragmaExpr}:
-    var entry = ctx.module.newDocEntry(ndkBuiltin, name.getStrVal())
+    var entry = ctx.docModule.newDocEntry(ndkBuiltin, name.getStrVal())
 
     if exported:
       entry.visibility = dvkPublic
@@ -923,10 +930,11 @@ proc registerDeclSection(
 
     of nkConstDef, nkIdentDefs:
       let (exported, name) = getEntryName(node)
+      ctx.activeUser = ctx[name.sym]
       let pragma = node.getPragmas(@["intdefine", "strdefine", "booldefine"])
       let nodeKind = tern(0 < len(pragma), ndkCompileDefine, nodeKind)
 
-      var def = ctx.module.newDocEntry(nodeKind, name.getStrVal())
+      var def = ctx.docModule.newDocEntry(nodeKind, name.getStrVal())
       if exported:
         def.visibility = dvkPublic
 
@@ -939,6 +947,8 @@ proc registerDeclSection(
       assert false, $node.kind
 
 proc registerTopLevel(ctx: DocContext, node: PNode) =
+  let user = ctx.activeUser
+
   case node.kind:
     of nkProcDeclKinds:
       ctx.registerProcDef(node)
@@ -957,60 +967,98 @@ proc registerTopLevel(ctx: DocContext, node: PNode) =
     of nkVarSection, nkLetSection, nkConstSection:
       ctx.registerDeclSection(node)
 
-    of nkEmpty, nkCommentStmt, nkIncludeStmt, nkImportStmt,
-       nkPragma, nkExportStmt:
-      discard
-
     else:
       discard
 
   var state = initRegisterState()
-  state.moduleId = ctx.module.id
+  state.moduleId = ctx.docModule.id
+  ctx.activeUser = user
   ctx.registerUses(node, state)
 
+func expandCtx(ctx: DocContext): int =
+  ctx.config.m.msgContext.len
 
-proc semDocPassOpen*(
-    graph: ModuleGraph; module: PSym; idgen: IdGenerator
-  ): PPassContext =
-  ## Open extended semantic pass context for given module
-  var c = newContext(graph, module, DocSemContext()).DocSemContext()
-  return semPassSetupOpen(c, graph, module, idgen)
+proc preExpand(context: PContext, expr: PNode, sym: PSym) =
+  let ctx = DocContext(context)
+  ctx.db.expansions.add ExpansionData(
+    expansionOf: sym,
+    expandDepth: ctx.expansionStack.len,
+    expandedFrom: expr,
+    expansionUser: ctx.activeUser
+  )
+
+  ctx.activeExpansion = ExpansionId(ctx.db.expansions.high)
+  ctx.expansionStack.add ctx.db.expansions.high
+
+proc postExpand(context: PContext, expr: PNode, sym: PSym) =
+  let ctx = DocContext(context)
+  ctx.expanded[].incl expr.id
+  let last = ctx.expansionStack.pop()
+  ctx.db.expansions[last].resultNode = expr
 
 proc setupDocPasses(graph: ModuleGraph): DocDb =
   ## Setup necessary context (semantic and docgen passes) for module graph
   var db {.global.}: DocDb
   var sigmap {.global.}: TableRef[PSym, DocId]
+  var expanded {.global.}: ref IntSet
 
   sigmap = newTable[PSym, DocId]()
   db = DocDb()
+  expanded = (ref IntSet)()
 
-  registerPass(graph, makePass(
-    # Largely identical to the regular `sem.semPass`, with only exception
-    # of the extended sem doc pass context usage.
-    semDocPassOpen, semPassProcess, semPassClose, isFrontend = true))
-
-  # Register main documentation pass
   registerPass(graph, makePass(
     TPassOpen(
-      proc(graph: ModuleGraph, module: PSym, idgen: IdGenerator): PPassContext {.nimcall.} =
-        var context = DocContext(db: db, sigmap: sigmap, graph: graph)
-        context.module = newDocEntry(db, ndkModule, module.name.s)
-        context.module.visibility = dvkPublic
-        sigmap[module] = context.module.id
+      proc(
+        graph: ModuleGraph, module: PSym, idgen: IdGenerator
+      ): PPassContext {.nimcall.} =
+        var c = DocContext(newContext(graph, module, DocContext(
+          db: db,
+          expanded: expanded,
+          sigmap: sigmap,
+          docModule: newDocEntry(db, ndkModule, module.name.s),
+          firstExpansion: db.expansions.len,
+          expandHooks: (
+            preMacro:     SemExpandHook(preExpand),
+            postMacro:    SemExpandHook(postExpand),
+            preTemplate:  SemExpandHook(preExpand),
+            postTemplate: SemExpandHook(postExpand)))))
 
-        return context
+        c.activeUser = c.docModule.id
+        c.docModule.visibility = dvkPublic
+        sigmap[module] = c.docModule.id
+
+        return semPassSetupOpen(c, graph, module, idgen)
     ),
     TPassProcess(
       proc(c: PPassContext, n: PNode): PNode {.nimcall.} =
-        # No node modifications is performed here, only analyzing nodes.
-        result = n
+        result = semPassProcess(c, n)
         var ctx = DocContext(c)
-        registerTopLevel(ctx, n)
+        registerTopLevel(ctx, result)
     ),
     TPassClose(
       proc(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
-        discard)
-  ))
+        result = semPassClose(graph, p, n)
+        var ctx = DocContext(p)
+
+        for expand in ctx.db.expansions[ctx.firstExpansion .. ^1]:
+          if expand.expandDepth == 0:
+            ctx.occur(
+              tern(
+                expand.expandedFrom.kind in {nkIdent, nkSym},
+                expand.expandedFrom,
+                expand.expandedFrom[0],
+              ),
+              ctx[expand.expansionOf],
+              dokCall,
+              some expand.expansionUser)
+
+          else:
+            # Information about expansion-in-expansion for a macro
+            discard
+
+
+    ),
+    isFrontend = true))
 
   return db
 

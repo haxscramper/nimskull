@@ -29,9 +29,6 @@ proc semTemplateExpr(c: PContext, n: PNode, s: PSym,
   result = evalTemplate(n, s, getCurrOwner(c), c.config, c.cache,
                         c.templInstCounter, c.idgen, efFromHlo in flags)
 
-  if not c.expandHooks.postTemplate.isNil:
-    c.expandHooks.postTemplate(c, result, s)
-
   if efNoSemCheck notin flags:
     result = semAfterMacroCall(c, n, result, s, flags)
 
@@ -39,6 +36,10 @@ proc semTemplateExpr(c: PContext, n: PNode, s: PSym,
 
   # XXX: A more elaborate line info rewrite might be needed
   result.info = info
+
+  if not c.expandHooks.postTemplate.isNil:
+    c.expandHooks.postTemplate(c, result, s)
+
 
 proc semFieldAccess(c: PContext, n: PNode, flags: TExprFlags = {}): PNode
 

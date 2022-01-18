@@ -603,8 +603,6 @@ proc semMacroExpr(c: PContext, n: PNode, sym: PSym,
   if efNoSemCheck notin flags:
     result = semAfterMacroCall(c, n, result, sym, flags)
 
-  if not c.expandHooks.postMacro.isNil:
-    c.expandHooks.postMacro(c, result, sym)
 
   if reportTraceExpand:
     c.config.localReport(n.info, SemReport(
@@ -615,6 +613,9 @@ proc semMacroExpr(c: PContext, n: PNode, sym: PSym,
 
   result = wrapInComesFrom(n.info, sym, result)
   popInfoContext(c.config)
+
+  if not c.expandHooks.postMacro.isNil:
+    c.expandHooks.postMacro(c, result, sym)
 
 proc forceBool(c: PContext, n: PNode): PNode =
   result = fitNode(c, getSysType(c.graph, n.info, tyBool), n, n.info)
