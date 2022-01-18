@@ -8,6 +8,7 @@ type
     ##   operator implementations.
     # procedure kinds start
     ndkProc ## Procedure definition
+    ndkFunc ## Procedure definition
 
     ndkMacro ## Macro
     ndkMethod ## Method
@@ -328,6 +329,7 @@ type
     db*: DocDb
     sigmap*: TableRef[PSym, DocId]
     graph*: ModuleGraph
+    module*: DocEntry
 
 
 func `==`*(i1, i2: DocId): bool = i1.int == i2.int

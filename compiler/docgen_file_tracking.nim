@@ -140,7 +140,7 @@ proc headSym*(node: PNode): PSym =
       assert false, "TODO " & $node.kind
 
 
-proc addSigmap(ctx: DocContext, node: PNode, entry: DocEntry) =
+proc addSigmap*(ctx: DocContext, node: PNode, entry: DocEntry) =
   try:
     let sym = node.headSym()
     if not isNil(sym):
