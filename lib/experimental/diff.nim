@@ -530,6 +530,30 @@ proc shiftDiffed*[T](
         result.newShifted.add((sekKeep, line.targetPos))
 
 
+iterator zipToMax*[T](lhs, rhs: seq[T], fill: T = default(T)):
+  tuple[lhs, rhs: T, rhsDefault, lhsDefault: bool, idx: int] =
+  ## Iterate each argumen to the end, filling in missing values with `fill`
+  ## argument. This is an opposite of the std built-in `zip` which iterates
+  ## up until `min(lhs.len, rhs.len)`.
+  ##
+  ## This is an internal iteratr, exported to be shared with `colordiff`
+  ## implementaion, but if you are implementing your own diff formatter,
+  ## you might consider using it as well.
+
+  var idx = 0
+  while idx < max(lhs.len, rhs.len):
+    if idx < lhs.len and idx < rhs.len:
+      yield (lhs[idx], rhs[idx], false, false, idx)
+
+    elif idx < lhs.len:
+      yield (lhs[idx], fill, false, true, idx)
+
+    else:
+      yield (fill, rhs[idx], true, false, idx)
+
+    inc idx
+
+
 proc formatDiffed*(
     shifted: ShiftedDiff,
     oldSeq, newSeq: seq[string],
@@ -601,7 +625,7 @@ Generated diff formatting does not contain trailing newline
 
   # Iterate over shifted diff sequence, construct formatted list of lines
   # that will be joined to final output.
-  for (lhs, rhs) in zip(shifted.oldShifted, shifted.newShifted):
+  for (lhs, rhs, lhsDefault, rhsDefault, _) in zipToMax(shifted.oldShifted, shifted.newShifted):
     oldText.add((editFmt(lhs.kind, lhs.item, true), true))
 
     newText.add((
@@ -611,7 +635,10 @@ Generated diff formatting does not contain trailing newline
       not sideBySide and rhs.kind in {sekInsert}
     ))
 
-    if lhs.kind == sekDelete and rhs.kind == sekInsert:
+    if not lhsDefault and
+       not rhsDefault and
+       lhs.kind == sekDelete and
+       rhs.kind == sekInsert:
       oldText[^1].text.add oldSeq[lhs.item]
       newText[^1].text.add newSeq[rhs.item]
 

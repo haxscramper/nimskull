@@ -18,7 +18,7 @@ from std/sugar import dup
 import utils/nodejs
 import lib/stdtest/testutils
 from lib/stdtest/specialpaths import splitTestFile
-from std/private/gitutils import diffStrings
+import experimental/colordiff
 
 proc trimUnitSep(x: var string) =
   let L = x.len
@@ -32,10 +32,35 @@ var optVerbose = false
 var useMegatest = true
 var optFailing = false
 
+import std/sugar
+
+proc diffStrings*(a, b: string): tuple[output: string, same: bool] =
+  let a = a.split("\n")
+  let b = b.split("\n")
+  var maxA = 0
+  var maxB = 0
+  for line in a:
+    maxA = max(maxA, line.len)
+
+  for line in b:
+    maxB = max(maxB, line.len)
+
+  var fmt = defaultDiffFormatter[string]()
+  fmt.sideBySide = maxA + maxB + 8 < terminalWidth()
+
+  let diff = myersDiff(a, b)
+  if len(diff) == 0:
+    result.same = true
+
+  else:
+    result.same = false
+    result.output = diff.shiftDiffed(a, b).
+      formatDiffed(a, b, fmt).toString(useColors)
+
 ## Blanket method to encaptsulate all echos while testament is detangled.
-## Using this means echo cannot be called with separation of args and must instead
-## pass a single concatenated string so that optional paramters can be
-## included
+## Using this means echo cannot be called with separation of args and must
+## instead pass a single concatenated string so that optional paramters can
+## be included
 type
   MessageType = enum
     Undefined,
