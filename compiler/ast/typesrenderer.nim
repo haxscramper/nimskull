@@ -124,6 +124,13 @@ proc renderParamTypes*(n: PNode, sep = defaultParamSeparator): string =
   if found.len > 0:
     result = found.join(sep)
 
+proc addTypeDeclVerboseMaybe*(result: var string, conf: ConfigRef; typ: PType) =
+  if optDeclaredLocs in conf.globalOptions:
+    result.add typeToString(typ, preferMixed)
+    result.addDeclaredLoc(conf, typ)
+  else:
+    result.add typeToString(typ)
+
 proc getProcHeader(
     conf: ConfigRef; sym: PSym; prefer: TPreferedDesc = preferName; getDeclarationPath = true): string =
   ##
