@@ -2,7 +2,7 @@
 
 import
   ast/[
-    ast,
+    ast_types,
     reports,
     renderer,
     lineinfos
@@ -316,17 +316,18 @@ proc treeRepr*(
         add $n.id
 
     proc addComment(sep: bool = true) =
-      if trfShowNodeComments in flags and n.comment.len > 0:
-        add "\n"
-        var nl = false
-        for line in split(n.comment.strip(leading = false), '\n'):
-          if nl: add "\n"
-          nl = true
+      when false:
+        if trfShowNodeComments in flags and n.comment.len > 0:
+          add "\n"
+          var nl = false
+          for line in split(n.comment.strip(leading = false), '\n'):
+            if nl: add "\n"
+            nl = true
 
-          addi indent, "  # " & line + fgCyan
+            addi indent, "  # " & line + fgCyan
 
-      elif sep:
-        add " "
+        elif sep:
+          add " "
 
     proc addFlags() =
       if trfShowNodeFlags in flags and n.flags.len > 0:
@@ -335,7 +336,7 @@ proc treeRepr*(
       if trfShowNodeTypes in flags and not n.typ.isNil():
         if (
           n.typ.kind notin CompressedBuiltinTypes or
-          (n.kind in nkIntKinds and n.typ.kind notin IntTypes)
+          (n.kind in {nkCharLit .. nkUInt64Lit} and n.typ.kind notin IntTypes)
         ):
           if n.kind == nkSym and not isNil(n.sym):
             if n.sym.typ == n.typ:
@@ -358,7 +359,7 @@ proc treeRepr*(
       add ")"
 
     case n.kind:
-      of nkStrKinds:
+      of {nkStrLit..nkTripleStrLit}:
         add " "
         add "\"" & n.strVal + fgYellow & "\""
         addFlags()
@@ -410,12 +411,12 @@ proc treeRepr*(
 
     if n.kind notin nkNone .. nkNilLit:
       addFlags()
-      if n.len > 0:
+      if n.sons.len > 0:
         add "\n"
 
       addComment(false)
 
-      for newIdx, subn in n:
+      for newIdx, subn in n.sons:
         if trfSkipAuxError in flags and n.kind == nkError and newIdx in {1, 2}:
           continue
 
@@ -428,7 +429,7 @@ proc treeRepr*(
         if newIdx > maxLen:
           break
 
-        if newIdx < n.len - 1:
+        if newIdx < n.sons.len - 1:
           add "\n"
 
   aux(pnode, @[])
