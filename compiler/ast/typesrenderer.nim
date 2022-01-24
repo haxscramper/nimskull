@@ -133,7 +133,6 @@ proc addTypeDeclVerboseMaybe*(result: var string, conf: ConfigRef; typ: PType) =
 
 proc getProcHeader(
     conf: ConfigRef; sym: PSym; prefer: TPreferedDesc = preferName; getDeclarationPath = true): string =
-  ##
   assert sym != nil
   # consider using `skipGenericOwner` to avoid fun2.fun2 when fun2 is generic
   result = sym.owner.name.s & '.' & sym.name.s
@@ -153,3 +152,7 @@ proc getProcHeader(
     if n[0].typ != nil:
       result.add(": " & typeToString(n[0].typ, prefer))
   if getDeclarationPath: result.addDeclaredLoc(conf, sym)
+
+proc addTypeHeader*(result: var string, conf: ConfigRef; typ: PType; prefer: TPreferedDesc = preferMixed; getDeclarationPath = true) =
+  result.add typeToString(typ, prefer)
+  if getDeclarationPath: result.addDeclaredLoc(conf, typ.sym)

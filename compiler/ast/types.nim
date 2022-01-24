@@ -146,10 +146,6 @@ proc isIntLit*(t: PType): bool {.inline.} =
 proc isFloatLit*(t: PType): bool {.inline.} =
   result = t.kind == tyFloat and t.n != nil and t.n.kind == nkFloatLit
 
-proc addTypeHeader*(result: var string, conf: ConfigRef; typ: PType; prefer: TPreferedDesc = preferMixed; getDeclarationPath = true) =
-  result.add typeToString(typ, prefer)
-  if getDeclarationPath: result.addDeclaredLoc(conf, typ.sym)
-
 proc elemType*(t: PType): PType =
   assert(t != nil)
   case t.kind
