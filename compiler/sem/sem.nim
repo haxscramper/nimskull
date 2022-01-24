@@ -23,6 +23,7 @@ import
     wordrecg,
     renderer,
     types,
+    typesrenderer,
     nimsets,
     errorreporting,
     errorhandling,
