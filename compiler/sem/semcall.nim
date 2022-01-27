@@ -113,7 +113,7 @@ proc pickBestCandidate(c: PContext, headSymbol: PNode,
           firstMismatch: z.firstMismatch,
           diagnostics: z.diagnostics,
           isDiagnostic: z.diagnosticsEnabled or efExplain in flags
-          ))
+        ))
 
     else:
       # Symbol table has been modified. Restart and pre-calculate all syms

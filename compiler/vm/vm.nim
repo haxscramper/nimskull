@@ -17,7 +17,6 @@ import
     parseutils
   ],
   ast/[
-    astalgo,
     lineinfos,
     renderer, # toStrLit implementation
     trees,
