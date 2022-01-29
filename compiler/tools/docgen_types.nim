@@ -337,7 +337,7 @@ type
                    ## annotations
     moduleId*: Option[DocId]
 
-  DocDb* = ref object
+  DocDb* = ref object of RootRef
     entries*: seq[DocEntry]
     files*: Table[FileIndex, DocFile]
     currentTop*: DocEntry

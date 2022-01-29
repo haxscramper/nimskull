@@ -13,13 +13,15 @@ import
     renderer
   ],
   modules/[
-    modulegraphs
+    modulegraphs,
+    modules
   ],
   utils/[
     astrepr
   ],
   ./docgen_types,
   ./docgen_file_tracking,
+  ./docgen_unparser,
   std/[
     options,
     tables,
@@ -212,11 +214,11 @@ proc exprTypeSym(n: PNode): PSym =
 proc getStrVal*(p: PNode, doRaise: bool = true): string =
   ## Get string value from `PNode`
   case p.kind:
-    of nkIdent:                         result = p.ident.s
-    of nkSym:                           result = p.sym.name.s
-    of docgen_file_tracking.nkStrKinds: result = p.strVal
-    of nkOpenSymChoice:                 result = p[0].sym.name.s
-    of nkAccQuoted:                     result = ($p)[1..^2]
+    of nkIdent:         result = p.ident.s
+    of nkSym:           result = p.sym.name.s
+    of nkStrKinds:      result = p.strVal
+    of nkOpenSymChoice: result = p[0].sym.name.s
+    of nkAccQuoted:     result = ($p)[1..^2]
     else:
       if doRaise:
         assert false, "Unexpected kind for 'getStrVal' - " & $p.kind
@@ -641,10 +643,12 @@ proc impl(
 
     of nkCommentStmt,
        nkEmpty,
-       docgen_file_tracking.nkStrKinds,
+       nkStrKinds,
        nkFloatKinds,
        nkNilLit:
       discard
+      # TODO store list of all the hardcoded magics in the code -
+      # nonstandard float and integer literals, formatting strings etc.
 
     of nkIntKinds:
       if not isNil(node.typ) and
@@ -824,6 +828,9 @@ proc registerTypeDef(ctx: DocContext, node: PNode) =
       node[2][0].kind == nkObjectTy)):
     var entry = ctx.docModule.newDocEntry(
       ctx.classifyDeclKind(node), name.getStrVal())
+
+    var obj = unparseDefs(node)[0]
+    assert obj.kind == deftObject
 
     when false:
       if exported:
@@ -1008,27 +1015,35 @@ proc postExpand(context: PContext, expr: PNode, sym: PSym) =
   let last = ctx.expansionStack.pop()
   ctx.db.expansions[last].resultNode = expr
 
+type
+  DocBackend = ref object of RootObj
+    db: DocDb
+    sigmap: TableRef[PSym, DocId]
+    expanded: ref IntSet
+
 proc setupDocPasses(graph: ModuleGraph): DocDb =
   ## Setup necessary context (semantic and docgen passes) for module graph
-  var db {.global.}: DocDb
-  var sigmap {.global.}: TableRef[PSym, DocId]
-  var expanded {.global.}: ref IntSet
+  var back = DocBackend(
+    sigmap: newTable[PSym, DocId](),
+    db: DocDb(),
+    expanded: (ref IntSet)()
+  )
 
-  sigmap = newTable[PSym, DocId]()
-  db = DocDb()
-  expanded = (ref IntSet)()
+  graph.backend = back
 
   registerPass(graph, makePass(
     TPassOpen(
       proc(
         graph: ModuleGraph, module: PSym, idgen: IdGenerator
       ): PPassContext {.nimcall.} =
+        var back = DocBackend(graph.backend)
+
         var c = DocContext(newContext(graph, module, DocContext(
-          db: db,
-          expanded: expanded,
-          sigmap: sigmap,
-          docModule: newDocEntry(db, ndkModule, module.name.s),
-          firstExpansion: db.expansions.len,
+          db: back.db,
+          expanded: back.expanded,
+          sigmap: back.sigmap,
+          docModule: newDocEntry(back.db, ndkModule, module.name.s),
+          firstExpansion: back.db.expansions.len,
           expandHooks: (
             preMacro:     SemExpandHook(preExpand),
             postMacro:    SemExpandHook(postExpand),
@@ -1037,7 +1052,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
 
         c.activeUser = c.docModule.id
         c.docModule.visibility = dvkPublic
-        sigmap[module] = c.docModule.id
+        back.sigmap[module] = c.docModule.id
 
         return semPassSetupOpen(c, graph, module, idgen)
     ),
@@ -1072,7 +1087,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
     ),
     isFrontend = true))
 
-  return db
+  return back.db
 
 proc commandDoc3*(graph: ModuleGraph, ext: string) =
   ## Execute documentation generation command for module graph
