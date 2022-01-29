@@ -211,207 +211,95 @@ proc exprTypeSym(n: PNode): PSym =
     else:
       result = headSym(n)
 
-proc getStrVal*(p: PNode, doRaise: bool = true): string =
-  ## Get string value from `PNode`
-  case p.kind:
-    of nkIdent:         result = p.ident.s
-    of nkSym:           result = p.sym.name.s
-    of nkStrKinds:      result = p.strVal
-    of nkOpenSymChoice: result = p[0].sym.name.s
-    of nkAccQuoted:     result = ($p)[1..^2]
-    else:
-      if doRaise:
-        assert false, "Unexpected kind for 'getStrVal' - " & $p.kind
-
-      else:
-        result = ""
-
-
-
-proc getEntryName(node: PNode): tuple[exported: bool, name: PNode] =
+proc getEntryName(node: PNode): DefName =
   case node.kind:
-    of nkPragmaExpr:
-      case node[0].kind:
-        of nkPostfix:
-          result.name = node[0][1]
-          result.exported = true
-
-        else:
-          result.name = node[0]
-
-    of nkPostfix:
-      result.name = node[1]
-      result.exported = true
-
     of nkIdentDefs, nkTypeDef, nkConstDef, nkProcDeclKinds:
       result = getEntryName(node[0])
 
     else:
-      result.name = node
+      result = unparseName(node)
 
-  if result.name.kind notin {nkIdent, nkSym}:
-    debug node
-    assert false, $node.kind
-
-proc getBaseType*(node: PNode): PNode =
-  case node.kind:
-    of nkRefTy, nkPtrTy:
-      result = getBaseType(node[0])
-
-    of nkObjectTy:
-      result = getBaseType(node[1])
-
-    of nkOfInherit:
-      result = node[0]
-
-    else:
-      discard
-
-  assert result.isNil() or result.kind in {nkSym}
-
-proc getPragmas(node: PNode): seq[PNode] =
-  case node.kind:
-    of nkIdent, nkSym, nkEmpty:
-      discard
-
-    of nkPragma:
-      for entry in items(node):
-        result.add entry
-
-    of nkAccQuoted:
-      discard
-
-    of nkPostfix:
-      return getPragmas(node[1])
-
-    of nkPragmaExpr:
-      for pr in node:
-        result.add getPragmas(pr)
-
-    of nkTypeDef, nkIdentDefs, nkRecCase, nkConstDef:
-      return getPragmas(node[0])
-
-    of nkProcDeclKinds:
-      return getPragmas(node[pragmasPos])
-
-
-    else:
-      assert false, $node.kind
-
-
-proc getPragmas(n: PNode, name: seq[string]): seq[PNode] =
-  for pragma in n.getPragmas():
-    if pragma.safeLen > 0:
-      case pragma[0].kind:
-        of nkSym, nkIdent:
-          if pragma[0].getStrVal() in name:
-            result.add pragma[0]
-
-        of nkCall, nkCommand, nkExprColonExpr:
-          if pragma[0][0].getStrVal() in name:
-            result.add pragma[0]
-
+proc classifyDeclKind(ctx: DocContext, def: DefTree): DocEntryKind =
+  case def.kind:
+    of deftProc:
+      case def.node.kind:
+        of nkProcDef:      result = ndkProc
+        of nkTemplateDef:  result = ndkTemplate
+        of nkMacroDef:     result = ndkMacro
+        of nkMethodDef:    result = ndkMethod
+        of nkIteratorDef:  result = ndkIterator
+        of nkFuncDef:      result = ndkFunc
+        of nkConverterDef: result = ndkConverter
         else:
-          assert false, $pragma[0].kind
+          failNode def.node
 
 
-proc todo(node: PNode, str: string) =
-  debug node
-  assert false, str & " " & $node.kind
+    of deftObject:
+      case def.getSName():
+        of "CatchableError": result = ndkException
+        of "Defect":         result = ndkDefect
+        of "RootEffect":     result = ndkEffect
+        else:
+          result =
+            if def.objBase.isNil():
+              ndkObject
 
-proc classifyDeclKind(ctx: DocContext, decl: PNode): DocEntryKind =
-  case decl.kind:
-    of nkProcDef:      result = ndkProc
-    of nkTemplateDef:  result = ndkTemplate
-    of nkMacroDef:     result = ndkMacro
-    of nkMethodDef:    result = ndkMethod
-    of nkIteratorDef:  result = ndkIterator
-    of nkFuncDef:      result = ndkFunc
-    of nkConverterDef: result = ndkConverter
-    of nkTypeDef:
-      case decl[2].kind:
-        of nkObjectTy, nkRefTy, nkPtrTy:
-          let name: string = decl.getEntryName().name.getStrVal()
-          case name:
-            of "CatchableError": result = ndkException
-            of "Defect":         result = ndkDefect
-            of "RootEffect":     result = ndkEffect
             else:
-              let base = getBaseType(decl)
-              if decl[2].kind in {nkRefTy, nkPtrTy} and
-                 decl[2][0].kind notin {nkObjectTy}:
-                # `P = ref T` or `P = pre T`
-                result = ndkAlias
+              ctx.db[ctx[def.objBase]].kind
 
-              elif base.isNil():
-                result = ndkObject
+    of deftAlias:
+      if def.node.kind in {nkInfix}:
+        result = ndkTypeclass
 
-              else:
-                result = ctx.db[ctx[base]].kind
-
-        of nkInfix:
-          result = ndkTypeclass
-
-        of nkSym, nkBracketExpr, nkProcTy, nkTupleTy:
-          # `A = B`, `A = B[C]`, `A = proc()`, `A = tuple[]`
-          result = ndkAlias
-
-        else:
-          decl[2].todo "type definition"
+      else:
+        result = ndkAlias
 
     else:
-      decl.todo "??"
+      assert false, "todo " & $def.kind
 
-proc registerDeprecated(entry: var DocEntry, node: PNode) =
-  let depr = node.getPragmas(@["deprecated"])
+proc getDeprecated(name: DefName): Option[string] =
+  let depr = name.pragmas.filterPragmas(@["deprecated"])
   if 0 < len(depr):
     let depr = depr[0]
     if depr.safeLen == 0:
-      entry.deprecatedMsg = some ""
+      return some ""
 
     else:
-      entry.deprecatedMsg = some depr[1].getStrVal()
+      return some depr[1].getSName()
 
-proc registerProcDef(ctx: DocContext, procDef: PNode) =
-  let (exported, name) = getEntryName(procDef)
-  ctx.activeUser = ctx[name.sym]
-  var entry = ctx.docModule.newDocEntry(
-    ctx.classifyDeclKind(procDef), name.getStrVal())
+proc registerProcDef(ctx: DocContext, def: DefTree): DocEntry =
+  ctx.activeUser = ctx[def.name.sym]
+  result = ctx.docModule.newDocEntry(
+    ctx.classifyDeclKind(def), def.sym.getSName())
 
-  entry.sym = name.sym
-
-  case entry.name:
-    of "=destroy": entry.procKind = dpkDestructor
-    of "=sink":    entry.procKind = dpkMoveOverride
-    of "=copy":    entry.procKind = dpkCopyOverride
-    of "=":        entry.procKind = dpkAsgnOverride
+  let name = def.getSName()
+  var pkind: DocProcKind
+  case name:
+    of "=destroy": pkind = dpkDestructor
+    of "=sink":    pkind = dpkMoveOverride
+    of "=copy":    pkind = dpkCopyOverride
+    of "=":        pkind = dpkAsgnOverride
     else:
-      if entry.name[^1] == '=' and entry.name[0] in IdentStartChars:
-        entry.procKind = dpkPropertySet
+      if name[^1] == '=' and name[0] in IdentStartChars:
+        pkind = dpkPropertySet
 
-      elif entry.name[0] in IdentStartChars:
-        if entry.name.startsWith("init") or
-           entry.name.startsWith("new"):
-          entry.procKind = dpkConstructor
+      elif name[0] in IdentStartChars:
+        if name.startsWith("init") or name.startsWith("new"):
+          pkind = dpkConstructor
 
         else:
-          entry.procKind = dpkRegular
+          pkind = dpkRegular
 
       else:
-        entry.procKind = dpkOperator
+        pkind = dpkOperator
 
-  entry.registerDeprecated(procDef)
-  if exported:
-    entry.visibility = dvkPublic
+  result.procKind = pkind
 
-  ctx.addSigmap(procDef, entry)
-  {.hint: "TODO extract doc comments".}
-  # entry.docText.text.add procDef.docComment
 
-  for argument in procDef[paramsPos][1 ..^ 1]:
-    for ident in argument[0 ..^ 3]:
-      var arg = entry.newDocEntry(ndkArg, ident.getStrVal())
-      arg.sym = ident.sym
+  # for argument in procDef[paramsPos][1 ..^ 1]:
+  #   for ident in argument[0 ..^ 3]:
+  #     var arg = entry.newDocEntry(ndkArg, ident.getSName())
+  #     arg.sym = ident.sym
 
 proc registerProcBody(
     ctx: DocContext, body: PNode, state: RegisterState, node: PNode) =
@@ -447,11 +335,11 @@ proc registerProcBody(
 
   let icpp = effectSpec(prag, {wImportc, wImportCpp, wImportJs, wImportObjC})
   if not icpp.isNil():
-    main.wrapOf = some icpp[0].getStrVal()
+    main.wrapOf = some icpp[0].getSName()
 
   let dyn = effectSpec(prag, wDynlib)
   if not dyn.isNil():
-    main.dynlibOf = some dyn[0].getStrVal()
+    main.dynlibOf = some dyn[0].getSName()
 
   proc aux(node: PNode) =
     case node.kind:
@@ -791,7 +679,7 @@ proc impl(
           let head = ctx.db[ctx[headType.sym]]
           for fieldPair in node[1 ..^ 1]:
             let field = fieldPair[0]
-            let fieldId = head.getSub(field.getStrVal())
+            let fieldId = head.getSub(field.getSName())
             if fieldId.isValid():
               ctx.occur(field, fieldPair, fieldId, dokFieldSet, state.user)
 
@@ -818,117 +706,73 @@ proc impl(
 proc registerUses(ctx: DocContext, node: PNode, state: RegisterState) =
   discard impl(ctx, node, state, nil)
 
-proc registerTypeDef(ctx: DocContext, node: PNode) =
-  let (exported, name) = getEntryName(node)
-  ctx.activeUser = ctx[name.sym]
-  echo "registered ", name
-  if node.kind == nkTypeDef and (
-     node[2].kind == nkObjectTy or (
-      node[2].kind in {nkPtrTy, nkRefTy} and
-      node[2][0].kind == nkObjectTy)):
-    var entry = ctx.docModule.newDocEntry(
-      ctx.classifyDeclKind(node), name.getStrVal())
+proc registerTypeDef(ctx: DocContext, decl: DefTree): DocEntry =
+  ctx.activeUser = ctx[decl.name.sym]
+  case decl.kind:
+    of deftObject:
+      result = ctx.docModule.newDocEntry(
+        ctx.classifyDeclKind(decl), decl.getSName())
 
-    var obj = unparseDefs(node)[0]
-    assert obj.kind == deftObject
+      when false:
+        if objectDecl.base.isSome():
+          entry.superTypes.add ctx[objectDecl.base.get()]
 
-    when false:
-      if exported:
-        entry.visibility = dvkPublic
+        for param in objectDecl.name.genParams:
+          var p = entry.newDocEntry(dekParam, param.head)
 
-      if objectDecl.base.isSome():
-        entry.superTypes.add ctx[objectDecl.base.get()]
+        for nimField in iterateFields(objectDecl):
+          var field = entry.newDocEntry(dekField, nimField.name)
+          field.docText.rawDoc.add nimField.docComment
+          field.docText.docBody = ctx.convertComment(
+            nimField.docComment, nimField.declNode.get())
 
-      ctx.setLocation(entry, node)
-      ctx.addSigmap(node, entry)
-      entry.setDeprecated(node)
-      entry.docText.rawDoc.add objectDecl.docComment
-      entry.docText.docBody = ctx.convertComment(objectDecl.docComment, node)
+          if nimField.declNode.get().isExported():
+            field.visibility = dvkPublic
 
-      for param in objectDecl.name.genParams:
-        var p = entry.newDocEntry(dekParam, param.head)
+          with field:
+            identType = some ctx.toDocType(nimField.fldType)
+            identTypeStr = some $nimField.fldType
 
-      for nimField in iterateFields(objectDecl):
-        var field = entry.newDocEntry(dekField, nimField.name)
-        field.docText.rawDoc.add nimField.docComment
-        field.docText.docBody = ctx.convertComment(
-          nimField.docComment, nimField.declNode.get())
+          ctx.setLocation(field, nimField.declNode.get())
+          ctx.addSigmap(nimField.declNode.get(), field)
 
-        if nimField.declNode.get().isExported():
-          field.visibility = dvkPublic
+    of deftEnum:
+      result = ctx.docModule.newDocEntry(ndkEnum, decl.getSName())
 
-        with field:
-          identType = some ctx.toDocType(nimField.fldType)
-          identTypeStr = some $nimField.fldType
+      when false:
+        ctx.setLocation(entry, node)
+        entry.docText.docBody = ctx.convertComment(enumDecl.docComment, node)
 
-        ctx.setLocation(field, nimField.declNode.get())
-        ctx.addSigmap(nimField.declNode.get(), field)
-
-  elif node[2].kind == nkEnumTy:
-    var entry = ctx.docModule.newDocEntry(ndkEnum, name.getStrVal())
-
-    when false:
-      entry.setDeprecated(node)
-      ctx.setLocation(entry, node)
-      ctx.addSigmap(node, entry)
-      entry.docText.docBody = ctx.convertComment(enumDecl.docComment, node)
-
-      if enumDecl.exported:
-        entry.visibility = dvkPublic
-
-      for enField in enumDecl.values:
-        var field = entry.newDocEntry(dekEnumField, enField.name)
-        field.visibility = entry.visibility
-        # info enField.docComment
-        field.docText.docBody = ctx.convertComment(
-          enField.docComment, enField.declNode.get())
-        ctx.setLocation(field, enField.declNode.get())
-        ctx.addSigmap(enField.declNode.get(), field)
-
-  elif node[2].kind in {
-      nkDistinctTy, nkSym, nkPtrTy, nkRefTy, nkProcTy, nkTupleTy,
-      nkBracketExpr, nkInfix, nkVarTy
-    }:
-    let kind = tern(
-      node[2].kind == nkDistinctTy,
-      ndkDistinctAlias,
-      classifyDeclKind(ctx, node)
-    )
-
-    var entry = ctx.docModule.newDocEntry(kind, name.getStrVal())
-    entry.sym = name.sym
-
-    if exported:
-      entry.visibility = dvkPublic
-
-    entry.registerDeprecated(node)
-    ctx.addSigmap(node, entry)
-    entry.baseType = node[2].typ
-
-    when false:
-      for param in parseNType(node[0]).genParams:
-        var p = entry.newDocEntry(dekParam, param.head)
+        for enField in enumDecl.values:
+          var field = entry.newDocEntry(dekEnumField, enField.name)
+          field.visibility = entry.visibility
+          # info enField.docComment
+          field.docText.docBody = ctx.convertComment(
+            enField.docComment, enField.declNode.get())
+          ctx.setLocation(field, enField.declNode.get())
+          ctx.addSigmap(enField.declNode.get(), field)
 
 
-  elif node[0].kind in {nkPragmaExpr}:
-    var entry = ctx.docModule.newDocEntry(ndkBuiltin, name.getStrVal())
+    of deftAlias:
+      result = ctx.docModule.newDocEntry(
+        classifyDeclKind(ctx, decl),
+        decl.getSName())
 
-    if exported:
-      entry.visibility = dvkPublic
+      result.baseType = decl.baseType
 
-    entry.registerDeprecated(node)
-    ctx.addSigmap(node, entry)
+      when false:
+        for param in parseNType(node[0]).genParams:
+          var p = entry.newDocEntry(dekParam, param.head)
 
-  elif node[2].kind in {nkCall}:
-    # `Type = typeof(expr())`
-    discard
+    of deftMagic:
+      result = ctx.docModule.newDocEntry(ndkBuiltin, decl.getSName())
 
-  elif node[2].kind in {nkTypeClassTy}:
-    # IMPLEMENT concept indexing
-    discard
+    else:
+      assert false, $decl.kind
 
-  else:
-    assert false, $node[2].kind
+
+
+
 
 proc registerDeclSection(
     ctx: DocContext,
@@ -948,36 +792,50 @@ proc registerDeclSection(
         ctx.registerDeclSection(subnode, nodeKind)
 
     of nkConstDef, nkIdentDefs:
-      let (exported, name) = getEntryName(node)
-      ctx.activeUser = ctx[name.sym]
-      let pragma = node.getPragmas(@["intdefine", "strdefine", "booldefine"])
-      let nodeKind = tern(0 < len(pragma), ndkCompileDefine, nodeKind)
+      let defs = unparseDefs(node)
+      for def in defs:
+        ctx.activeUser = ctx[def.sym]
+        let pragma = def.pragmas.filterPragmas(
+          @["intdefine", "strdefine", "booldefine"])
 
-      var def = ctx.docModule.newDocEntry(nodeKind, name.getStrVal())
-      if exported:
-        def.visibility = dvkPublic
+        let nodeKind = tern(0 < len(pragma), ndkCompileDefine, nodeKind)
 
-      ctx.addSigmap(node[0], def)
+        var doc = ctx.docModule.newDocEntry(nodeKind, def.getSName())
+        if def.exported:
+          doc.visibility = dvkPublic
 
-    of nkVarTuple:
-      discard
+        ctx.addSigmap(node[0], doc)
 
     else:
-      assert false, $node.kind
+      failNode node
+
+proc updateCommon(entry: var DocEntry, decl: DefTree) = 
+  entry.deprecatedMsg = getDeprecated(decl.name)
+  entry.sym = decl.sym
+  if decl.exported:
+    entry.visibility = dvkPublic
+
 
 proc registerTopLevel(ctx: DocContext, node: PNode) =
   let user = ctx.activeUser
 
   case node.kind:
     of nkProcDeclKinds:
-      ctx.registerProcDef(node)
+      let def = unparseDefs(node)[0]
+      var doc = ctx.registerProcDef(def)
+      doc.updateCommon(def)
+      ctx.addSigmap(node, doc)
 
     of nkTypeSection:
       for typeDecl in node:
         registerTopLevel(ctx, typeDecl)
 
     of nkTypeDef:
-      ctx.registerTypeDef(node)
+      let def = unparseDefs(node)[0]
+      var doc = ctx.registerTypeDef(def)
+      doc.updateCommon(def)
+      ctx.addSigmap(node, doc)
+
 
     of nkStmtList:
       for subnode in node:

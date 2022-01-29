@@ -1,11 +1,13 @@
 import
   ast/[
     ast,
-    types
+    types,
+    renderer
   ],
   utils/[
     astrepr
-  ]
+  ],
+  ./docgen_file_tracking
 
 type
   DefTreeKind* = enum
@@ -15,14 +17,15 @@ type
     deftArg
     deftLet
     deftVar
+    deftMagic
     deftConst
     deftField
     deftEnumField
+    deftAlias
 
   DefFieldKind* = enum
     deffPlain
-    deffWrapOf
-    deffWrapElse
+    deffWrapCase
     deffWrapWhen
 
 const deftIdentKinds* = { deftArg, deftLet, deftVar, deftConst, deftField }
@@ -33,45 +36,118 @@ type
     exported*: bool
     pragmas*: seq[PNode]
 
-  DefField* = object
+  DefFieldBranch* = object
+    branchExprs*: seq[PNode]
+    subfields*: seq[DefField]
+
+
+  DefField* = ref object
     head*: DefTree
     case kind*: DefFieldKind
-      of deffWrapOf, deffWrapWhen, deffWrapElse:
-        branchExprs*: seq[PNode]
-        subfields*: seq[DefField]
+      of deffWrapCase, deffWrapWhen:
+        branches*: seq[DefFieldBranch]
 
       else:
         discard
 
-  DefTree = object
+  DefTree* = ref object
     defName*: DefName
     comment*: string
-    defNode*: PNode
+    defNode: PNode
 
     case kind*: DefTreeKind
       of deftProc:
         arguments*: seq[DefTree]
+        returnType*: PNode
 
       of deftIdentKinds:
         typ*: PNode
         initExpr*: PNode
+
+      of deftAlias:
+        baseType*: PNode
+        isDistinct*: bool
 
       of deftEnum:
         enumFields*: seq[DefTree]
 
       of deftEnumField:
         strOverride*: PNode
-        intOverride*: PNode
+        valOverride*: PNode
 
       of deftObject:
         objFields*: seq[DefField]
         objBase*: PNode
 
-func newDef*(kind: DefTreeKind): DefTree =
-  DefTree(kind: kind)
+      of deftMagic:
+        discard
 
-proc failNode(node: PNode) =
-  debug node
+func exported*(def: DefTree): bool = def.defName.exported
+func exported*(def: DefField): bool = def.head.exported
+func name*(def: DefTree): DefName = def.defName
+
+func sym*(def: DefName): PSym = def.ident.sym
+func sym*(def: DefTree): PSym = def.name.sym
+
+func getSName*(p: PNode): string =
+  ## Get string value from `PNode`
+  case p.kind:
+    of nkIdent:         result = p.ident.s
+    of nkSym:           result = p.sym.name.s
+    of nkStrKinds:      result = p.strVal
+    of nkOpenSymChoice: result = p[0].sym.name.s
+    of nkAccQuoted:
+      for sub in p:
+        result.add getSName(sub)
+
+    else:
+      assert false, "Unexpected kind for 'getSName' - " & $p.kind
+
+func filterPragmas*(pragmas: seq[PNode], names: seq[string]): seq[PNode] =
+  for pragma in pragmas:
+    if pragma.safeLen > 0:
+      case pragma[0].kind:
+        of nkSym, nkIdent:
+          if pragma[0].getSName() in names:
+            result.add pragma[0]
+
+        of nkCall, nkCommand, nkExprColonExpr:
+          if pragma[0][0].getSName() in names:
+            result.add pragma[0]
+
+        else:
+          assert false, $pragma[0].kind
+
+
+proc getSName*(p: PSym): string = p.name.s
+
+func getSName*(def: DefName): string =
+  def.ident.getSName()
+
+func getSName*(def: DefTree): string = def.name.getSName()
+func getSName*(def: DefField): string = def.head.getSName()
+
+func pragmas*(def: DefTree): seq[PNode] = def.name.pragmas
+func node*(def: DefTree): PNode = def.defNode
+
+
+func allFields*(def: DefTree): seq[DefField] =
+  func aux(def: DefField, res: var seq[DefField]) =
+    if def.kind in {deffWrapCase, deffWrapWhen}:
+      for branch in def.branches:
+        for field in branch.subfields:
+          aux(field, res)
+
+  for field in def.objFields:
+    result.add field
+    aux(field, result)
+
+func newDef*(kind: DefTreeKind, name: DefName, node: PNode): DefTree =
+  DefTree(kind: kind, defName: name, defNode: node)
+
+proc failNode*(node: PNode) {.
+    deprecated: "Temporary hack to speed up development".} =
+  echo treeRepr(nil, node, maxPath = 3)
   assert false
 
 proc unparseName*(node: PNode): DefName =
@@ -88,12 +164,15 @@ proc unparseName*(node: PNode): DefName =
         else:
           failNode node
 
+      for pragma in node[1]:
+        result.pragmas.add pragma
+
     of nkPostfix:
       result.ident = node[1]
       result.exported = true
 
-    of nkIdentDefs:
-      result = unparseName(node[0])
+    of nkIdent, nkSym:
+      result.ident = node
 
     else:
       failNode node
@@ -103,8 +182,123 @@ proc skipNodes*(t: PNode, kinds: set[TNodeKind]): PNode =
   while result.kind in kinds:
     result = lastSon(result)
 
+proc unparseIdentDefs(node: PNode): seq[DefTree] =
+  let expr = node[^1]
+  let typ = node[^2]
+  for idx, name in node[0..^3]:
+    var field = newDef(deftField, unparseName(name), name)
+    field.typ = typ
+    field.initExpr = expr
+    if idx == node.len - 2:
+      # QUESTION putting documentation comment only into the last
+      # field, assuming documentation for 'group of fields' would
+      # not be used this way, because it means that all target
+      # fields must have the same type, which is a major block.
+      field.comment = node.comment
+
+    result.add field
+
+
 proc unparseFields*(node: PNode): seq[DefField] =
-  assert false
+  proc auxBranches(node: PNode): seq[DefFieldBranch]
+  proc auxFields(node: PNode): seq[DefField] =
+    case node.kind:
+      of nkIdentDefs:
+        for field in unparseIdentDefs(node):
+          result.add DefField(head: field)
+
+      of nkRecWhen:
+        result.add DefField(
+          kind: deffWrapWhen,
+          branches: auxBranches(node)
+        )
+
+      of nkRecList:
+        for sub in node:
+          result.add auxFields(sub)
+
+      of nkEmpty:
+        discard
+
+      else:
+        failNode node
+
+  proc auxBranches(node: PNode): seq[DefFieldBranch] =
+    for branch in node:
+      case branch.kind:
+        of nkElifBranch:
+          result.add DefFieldBranch(
+            branchExprs: @[branch[0]],
+            subfields: auxFields(branch[1])
+          )
+
+        of nkElse:
+          result.add DefFieldBranch(subfields: auxFields(branch[0]))
+
+        else:
+          failNode branch
+
+  return auxFields(node)
+
+
+proc unparseDefs*(node: PNode): seq[DefTree]
+
+proc getBaseType*(node: PNode): PNode =
+  let body = node.skipNodes({nkRefTy, nkPtrTy})
+  if body[1].kind == nkOfInherit:
+    return body[1][0]
+
+proc unparseType*(node: PNode): DefTree = 
+  let body = node[2].skipNodes({nkPtrTy, nkRefTy})
+  case body.kind:
+    of nkObjectTy:
+      result = newDef(deftObject, unparseName(node[0]), node)
+      result.comment = node.comment
+      result.objFields = unparseFields(body[2])
+
+      if body[1].kind == nkOfInherit:
+        result.objBase = getBaseType(node)
+
+    of nkEnumTy:
+      result = newDef(deftEnum, unparseName(node[0]), node)
+      result.comment = node.comment
+      for field in body[1..^1]:
+        if field.kind in {nkIdent, nkPrefix}:
+          result.enumFields.add newDef(
+            deftEnumField, unparseName(field), field)
+
+        else:
+          result.enumFields.add unparseDefs(field)
+
+    of nkDistinctTy:
+      result = newDef(deftAlias, unparseName(node[0]), node)
+      result.isDistinct = true
+      result.baseType = body[0]
+
+    of nkInfix, nkProcTy, nkSym, nkIdent, nkBracketExpr, nkTupleTy:
+      result = newDef(deftAlias, unparseName(node[0]), node)
+      result.baseType = body
+
+    of nkEmpty:
+      assert node[0].kind in {nkPragmaExpr}, $treeRepr(nil, node)
+      result = newDef(deftMagic, unparseName(node[0]), node)
+      result.comment = node.comment
+
+    else:
+      echo ">>>> node"
+      failNode node
+
+
+proc unparseProcDef*(node: PNode): DefTree =
+  result = newDef(deftProc, unparseName(node[0]), node)
+  if node[pragmasPos].kind == nkPragma:
+    for arg in node[pragmasPos]:
+      result.defName.pragmas.add arg
+
+  result.returnType = node[paramsPos][0]
+
+  for arg in node[paramsPos][1..^1]:
+    result.arguments.add unparseIdentDefs(arg)
 
 proc unparseDefs*(node: PNode): seq[DefTree] =
   case node.kind:
@@ -112,18 +306,25 @@ proc unparseDefs*(node: PNode): seq[DefTree] =
       for sub in node:
         result.add unparseDefs(node)
 
+    of nkEnumFieldDef:
+      var res = newDef(deftEnumField, unparseName(node[0]), node)
+      case node[1].kind:
+        of nkIntLit:
+          res.valOverride = node[1]
+
+        else:
+          failNode node[1]
+
+      result.add res
+
     of nkTypeDef:
-      if node[2].skipNodes({nkPtrTy, nkRefTy}).kind in {nkObjectTy}:
-        var res = newDef(deftObject)
+      result.add unparseType(node)
 
-        res.objFields = unparseFields(node[2][2])
+    of nkConstDef, nkIdentDefs:
+      result = unparseIdentDefs(node):
 
-        failNode node
-
-        result.add res
-
-      else:
-        failNode node
+    of nkProcDeclKinds:
+      result.add unparseProcDef(node)
 
     else:
       failNode node

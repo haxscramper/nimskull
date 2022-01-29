@@ -310,7 +310,7 @@ type
         identDefault*: Option[DocCode] ## Expression for argument default
                                        ## value.
       of ndkAliasKinds:
-        baseType*: PType
+        baseType*: PNode
 
       of ndkProcKinds:
         procKind*: DocProcKind
