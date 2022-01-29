@@ -1,19 +1,28 @@
-import "."/[
-  docgen_types,
-  ast,
-  renderer,
-  sighashes,
-  modulegraphs,
-  lineinfos,
-  types
-]
-
-import std/[strutils, strformat, options, hashes, tables, enumerate]
+import
+  ./docgen_types,
+  ast/[
+    ast,
+    renderer,
+    lineinfos,
+    types
+  ],
+  sem/[
+    sighashes,
+  ],
+  modules/[
+    modulegraphs
+  ],
+  std/[
+    strutils,
+    strformat,
+    options,
+    hashes,
+    tables,
+    enumerate
+  ]
 
 const
-  nkStrKinds*     = { nkStrLit .. nkTripleStrLit }
   nkStringKinds*  = nkStrKinds
-  nkIntKinds*     = { nkCharLit .. nkUInt64Lit }
   nkFloatKinds*   = { nkFloatLit .. nkFloat128Lit }
   nkLiteralKinds* = nkStrKinds + nkIntKinds + nkFloatKinds + {nkNilLit}
   nkTokenKinds*   = nkLiteralKinds + {nkIdent, nkSym}

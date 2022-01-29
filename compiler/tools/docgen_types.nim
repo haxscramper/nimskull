@@ -1,4 +1,7 @@
-import "."/[ast, passes, modulegraphs, semdata]
+import
+  ast/ast,
+  sem/[passes, semdata],
+  modules/modulegraphs
 
 import std/[options, intsets, tables]
 
@@ -360,13 +363,13 @@ type
 func `==`*(i1, i2: DocId): bool = i1.int == i2.int
 func isValid*(id: DocId): bool = (id.int != 0)
 
-func add*(db: var DocDb, entry: DocEntry): DocId =
+func add*(db: var DocDb, entry: var DocEntry): DocId =
   result = db.entries.len.DocId()
   db.entries.add entry
   entry.db = db
   entry.id = result
 
-proc addTop*(db: var DocDb, entry: DocEntry): DocId =
+func addTop*(db: var DocDb, entry: var DocEntry): DocId =
   result = db.add entry
   db.top.add result
 

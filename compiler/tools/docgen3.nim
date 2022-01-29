@@ -1,20 +1,32 @@
-import "."/[
-  semdata,
-  sem,
-  astalgo,
-  types,
-  trees,
-  modulegraphs,
-  ast,
-  passes,
-  wordrecg,
-  modules,
-  docgen_types,
-  docgen_file_tracking,
-  renderer
-]
-
-import std/[options, tables, hashes, strutils, intsets]
+import
+  sem/[
+    semdata,
+    sem,
+    passes
+  ],
+  ast/[
+    astalgo,
+    ast,
+    trees,
+    types,
+    wordrecg,
+    renderer
+  ],
+  modules/[
+    modulegraphs
+  ],
+  utils/[
+    astrepr
+  ],
+  ./docgen_types,
+  ./docgen_file_tracking,
+  std/[
+    options,
+    tables,
+    hashes,
+    strutils,
+    intsets
+  ]
 
 static:
   assert(
