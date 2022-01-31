@@ -1750,4 +1750,3 @@ template initBlockFormatDSL*() {.dirty.} =
     firstNl: bool = false,
     breakMult: int
   ): LytBlock = initVerbBlock(strs, breaking, firstNl, breakMult)
-
