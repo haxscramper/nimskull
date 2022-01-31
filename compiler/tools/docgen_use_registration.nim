@@ -1,7 +1,8 @@
 import
   ./docgen_types,
   ./docgen_file_tracking,
-  ./docgen_unparser
+  ./docgen_unparser,
+  ./docgen_code_renderer
 
 import
   ast/[

@@ -226,8 +226,6 @@ type
     ##   of the identifier, which leads to potentially overlapping code
     ##   segments. Determining 'the correct' one is hardly possible, so
     ##   they are just dumped in the overlapping section.
-    covPasses*: Option[int] ## Merge code coverage reports with
-    ## documentable database.
 
   DocCode* = object
     ## Block of source code with embedded occurence links.

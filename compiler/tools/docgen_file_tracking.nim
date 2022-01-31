@@ -272,7 +272,6 @@ proc add*(line: var DocCodeLine, other: DocCodePart) =
 
     inc idx
 
-
   line.overlaps.add other
 
 proc add*(code: var DocCode, other: DocCodePart) =
