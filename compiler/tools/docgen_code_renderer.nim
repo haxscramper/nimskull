@@ -8,9 +8,11 @@ import
     astrepr
   ],
   std/[
-    sequtils
+    sequtils,
+    strutils
   ],
-  experimental/text_layouter
+  experimental/text_layouter,
+  ./docgen_ast_aux
 
 initBlockFormatDSL()
 
@@ -101,6 +103,9 @@ proc toLytStr(node: PNode): LytStr =
 proc lT(args: varargs[LytStr, toLytStr]): LytBlock =
   discard
 
+proc lTX(args: varargs[LytStr, toLytStr]): LytStrSpan =
+  lytStrSpan(args)
+
 proc lytInfix(
     n: PNode, conf: NimFormatConf, spacing: bool = true): LytBlock =
 
@@ -135,7 +140,7 @@ proc lytFormalParams(
 
 
   for idx, arg in n[1..^1]:
-    var hor = lH(lT(alignLeft($arg[0] & ": ", argPad)), lT(arg[1]))
+    var hor = lH(lT(alignLeft(lTX(arg[0], tkColon, 1), argPad)), lT(arg[1]))
     if not(arg[2] of nkEmpty):
       hor.add lT(1, tkEquals, 1)
       hor.add toLytBlock(arg[2], conf)
@@ -148,20 +153,20 @@ proc lytFormalParams(
 proc lytFormalReturnClose(n: PNode, conf: NimFormatConf): LytBlock =
   assertKind(n, {nkFormalParams})
   if n[0] of nkEmpty:
-    lT(")")
+    lT(tkParRi)
 
   else:
-    lH(lT("): "), toLytBlock(n[0], conf))
+    lH(lT(tkParRi, tkColon, 1), toLytBlock(n[0], conf))
 
 
 proc lytDocComment(n: PNode, prefix: string = ""): LytBlock =
-  if n.comment.len > 0:
-    result = lV()
-    for line in n.comment.split('\n'):
-      result.add lT(prefix & "## " & line)
+  # if n.comment.len > 0:
+  #   result = lV()
+  #   # for line in n.comment.split('\n'):
+  #   #   result.add lT(prefix & "## " & line)
 
-  else:
-    result = lE()
+  # else:
+  result = lE()
 
 proc lytCsv(n: PNode | seq[PNode], vertical: bool, conf: NimFormatConf): LytBlock =
   result = tern(vertical, lV(), lH())
@@ -169,7 +174,7 @@ proc lytCsv(n: PNode | seq[PNode], vertical: bool, conf: NimFormatConf): LytBloc
     for idx, item in n:
       result.add tern(
         idx < len(n) - 1,
-        lH(toLytBlock(item, conf), lT(", ")),
+        lH(toLytBlock(item, conf), lT(tkComma, 1)),
         toLytBlock(item, conf)
       )
 
@@ -177,13 +182,13 @@ proc lytCsv(n: PNode | seq[PNode], vertical: bool, conf: NimFormatConf): LytBloc
     for idx, item in n:
       result.add tern(
         idx > 0,
-        lH(lT(", "), toLytBlock(item, conf)),
+        lH(lT(tkComma, 1), toLytBlock(item, conf)),
         toLytBlock(item, conf)
       )
 
 proc lytTypedefHead(n: PNode, conf: NimFormatConf): LytBlock =
   if n[0] of nkPragmaExpr:
-    lH(~n[0][0], ~n[1], lT(" "), ~n[0][1])
+    lH(~n[0][0], ~n[1], lT(1), ~n[0][1])
 
   else:
     lH(~n[0], ~n[1])
@@ -195,20 +200,20 @@ const
 
 proc lytTypedef(n: PNode, conf: NimFormatConf): LytBlock =
   var head = lytTypedefHead(n, conf)
-  head.add lT(" = ")
+  head.add lT(1, tkEquals, 1)
 
   case n[2].kind:
     of nkObjectTy:
-      head.add lT("object")
+      head.add lT(tkObject)
       var body: seq[seq[LytBlock]]
       var resBody = lV()
 
       template flush(): untyped =
-        if ?body:
-          resBody.add makeAlignedGrid(
-            body, [sadLeft, sadLeft, sadLeft])
+        if 0 < len(body):
+          resBody.add initAlignedGrid(
+            body, [lAlignLeft, lAlignLeft, lAlignLeft])
 
-          body.clear()
+          body = @[]
 
       for field in n[2][2]:
         case field.kind:
@@ -222,7 +227,7 @@ proc lytTypedef(n: PNode, conf: NimFormatConf): LytBlock =
 
           of nkIdentDefs:
             body.add @[
-              lH(~field[0], lT(": ")),
+              lH(~field[0], lT(tkColon, 1)),
               ~field[1],
               lytDocComment(field, prefix = " ")]
 
@@ -231,34 +236,34 @@ proc lytTypedef(n: PNode, conf: NimFormatConf): LytBlock =
             resBody.add lytDocComment(field, prefix = "")
 
           else:
-            raise newImplementKindError(field)
+            failNode field
 
       flush()
       result = lV(head, lI(2, resBody))
 
     of nkEnumTy:
-      head.add lT("enum")
+      head.add lT(tkEnum)
       var body: seq[seq[LytBlock]]
       for field in n[2]:
         case field.kind:
           of nkIdent:
             let f = ~field
-            body.add @[f, lT(""), lT("")]
+            body.add @[f, lS(), lS()]
 
           of nkEnumFieldDef:
-            body.add @[~field[0], lT(" = "), ~field[1]]
+            body.add @[~field[0], lT(1, tkEquals, 1), ~field[1]]
 
           of nkEmpty:
             discard
 
           else:
-            raise newUnexpectedKindError(field)
+            failNode field
 
         if field.kind != nkEmpty:
-          body.last().add lytDocComment(field, prefix = " ")
+          body[^1].add lytDocComment(field, prefix = " ")
 
-      result = lV(head, lI(2, makeAlignedGrid(
-        body, [sadLeft, sadCenter, sadLeft, sadLeft])))
+      result = lV(head, lI(2, initAlignedGrid(
+        body, [lAlignLeft, lAlignCenter, lAlignLeft, lAlignLeft])))
 
     of nkTypeAliasKinds:
       head.add ~n[2]
@@ -268,49 +273,46 @@ proc lytTypedef(n: PNode, conf: NimFormatConf): LytBlock =
       result = lV(head, lI(2, ~n[2]))
 
     of nkDistinctTy:
-      result = lH(head, lT("distinct "), ~n[2][0])
+      result = lH(head, lT(tkDistinct, 1), ~n[2][0])
 
     else:
-      raise newImplementKindError(n[2], $n.treeRepr())
+      failNode n[2]
 
 
 proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
-  assertRef n
-
   case n.kind:
     of nkProcTy:
-      result = lV(lH(lT("proc("),
+      result = lV(lH(lT(tkProc, tkParLe),
           lytFormalParams(n[0], true, conf),
           lytFormalReturnClose(n[0], conf),
-          lT(" "),
-          ~n[1]
-))
+          lT(1),
+          ~n[1]))
 
     of nkAccQuoted:
-      result = lH(lT("`"))
+      result = lH(lT(tkAccent))
       for arg in n:
         result.add ~arg
 
-      result.add lT("`")
+      result.add lT(tkAccent)
 
     of nkProcDef, nkLambda, nkConverterDef, nkFuncDef:
-      result = makeChoiceBlock([])
+      result = lC()
 
       let kindName =
         case n.kind:
-          of nkProcDef: "proc"
-          of nkConverterDef: "converter"
-          of nkLambda: ""
-          of nkFuncDef: "func"
-          else: raise newImplementKindError(n)
+          of nkProcDef: toLytStr(tkProc)
+          of nkConverterDef: toLytStr(tkConverter)
+          of nkLambda: EmptyLytStr
+          of nkFuncDef: toLytStr(tkFunc)
+          else: failNode n
 
       # proc q*(a: B): C {.d.} =
       #   e
-      result.add lV(lH(lH(lT(kindName), lS(), ~n[0], ~n[1], ~n[2], lT("(")),
+      result.add lV(lH(lH(lT(kindName), lS(), ~n[0], ~n[1], ~n[2], lT(tkParLe)),
           lytFormalParams(n[3], false, conf),
           lytFormalReturnClose(n[3], conf),
-          if n[4] of nkEmpty: lT("") else: lH(lT(" "), ~n[4]),
-          if n[6] of nkEmpty: lT("") else: lT(" = ")),
+          if n[4] of nkEmpty: lS() else: lH(lT(1), ~n[4]),
+          if n[6] of nkEmpty: lS() else: lT(1, tkEquals, 1)),
         lV(lytDocComment(n), lI(2, ~n[6])),
         lS())
 
@@ -320,11 +322,11 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
         #     a: B
         #   ): C {.d.} =
         #     e
-        result.add lV(lH(lT(kindName), lS(), ~n[0], ~n[1], ~n[2], lT("(")),
+        result.add lV(lH(lT(kindName), lS(), ~n[0], ~n[1], ~n[2], lT(tkParLe)),
           lI(4, lytFormalParams(n[3], true, conf)),
           lH(lI(2, lytFormalReturnClose(n[3], conf)),
-            if n[4] of nkEmpty: lT("") else: lH(lT(" "), ~n[4]),
-            if n[6] of nkEmpty: lT("") else: lT(" = ")),
+            if n[4] of nkEmpty: lS() else: lH(lT(1), ~n[4]),
+            if n[6] of nkEmpty: lS() else: lT(1, tkEquals, 1)),
           lytDocComment(n),
           lI(2, ~n[6]),
           lS())
@@ -382,13 +384,13 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
           result.add ~sub
 
     of nkForStmt:
-      result = lV(lH(lT("for "), ~n[0], # IMPLEMENT multiple identifiers
-          lT(" in "), ~n[^2],
-          lT(":")),
+      result = lV(lH(lT(tkFor, 1), ~n[0], # IMPLEMENT multiple identifiers
+          lT(1, tkIn, 1), ~n[^2],
+          lT(tkColon)),
         lI(2, ~n[^1]))
 
     of nkWhileStmt:
-      result = lV(lH(lT("while "), ~n[0], lT(":")),
+      result = lV(lH(lT(tkWhile, 1), ~n[0], lT(tkColon)),
         lI(2, ~n[1]))
 
     of nkCaseStmt, nkRecCase:
@@ -399,10 +401,10 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
           arms.add ~arm
 
         if n of nkRecCase:
-          regular = lV(lH(lT("case "), ~n[0]), lI(2, arms))
+          regular = lV(lH(lT(tkCase, 1), ~n[0]), lI(2, arms))
 
         else:
-          regular = lV(lH(lT("case "), ~n[0], lT(":")), lI(2, arms))
+          regular = lV(lH(lT(tkCase, 1), ~n[0], lT(tkColon)), lI(2, arms))
 
       var grid = lV()
 
@@ -413,16 +415,16 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
         for arm in n[1 .. ^1]:
           if arm of nkOfBranch:
             ofarms.add @[
-              lH(lT("of "), lytCsv(arm[0 .. ^2], false, conf), lT(": ")),
+              lH(lT(tkOf, 1), lytCsv(arm[0 .. ^2], false, conf), lT(tkColon, 1)),
               ~arm[^1]
             ]
 
           else:
             elsearms.add ~arm
 
-        grid = lV(lH(lT("case "), ~n[0], lT(":")),
+        grid = lV(lH(lT(tkCase, 1), ~n[0], lT(tkColon)),
           lI(2,
-            lV(makeAlignedGrid(ofarms, @[sadLeft, sadLeft]),
+            lV(initAlignedGrid(ofarms, @[lAlignLeft, lAlignLeft]),
               lV(elsearms))))
 
       if {nffHorizontalPackedOf, nffVerticalPackedOf} in conf:
@@ -436,35 +438,36 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
       # result = grid
 
     of nkElse:
-      result = lV(lT("else:"), lI(2, ~n[0]))
+      result = lV(lT(tkElse, tkColon), lI(2, ~n[0]))
 
     of nkOfBranch:
-      let expr = joinItLine(n[0..^2], ~it, lT(", "))
+      let expr = joinItLine(n[0..^2], ~it, lT(tkComma, 1))
       let b = ~n[^1]
 
       case n[^1].kind:
         of nkRecList:
-          result = lV(lH(lT("of "), expr, lT(":")), b)
+          result = lV(lH(lT(tkOf, 1), expr, lT(tkColon)), b)
 
         else:
-          result = lV(lH(lT("of "), expr, lT(":")), lI(2, b))
+          result = lV(lH(lT(tkOf, 1), expr, lT(tkColon)), lI(2, b))
 
     of nkIfStmt, nkWhenStmt:
       result = lV()
-      for isFirst, branch in itemsIsFirst(n):
+      for idx, branch in pairs(n):
+        let isFirst = idx == 0
         if branch.kind == nkElse:
-          result.add lV(lT("else:"),
-            lI(2, ~branch[0]),
-            lT(""))
+          result.add lV(lT(tkElse, tkColon), lI(2, ~branch[0]), lS())
 
         else:
-          result.add lV(lH(lT(tern(
-              isFirst,
-              tern(n of nkIfStmt, "if ", "when "),
-              "elif ")), ~branch[0], lT(":")),
-
+          result.add lV(lH(lT(
+            tern(isFirst,
+              tern(n of nkIfStmt, tkElif, tkWhen),
+              tkElse),
+            1),
+            ~branch[0],
+            lT(tkColon)),
             lI(2, ~branch[1]),
-            lT(""))
+            lS())
 
     of nkLetSection, nkConstSection, nkVarSection:
       var decls: seq[LytBlock]
@@ -473,14 +476,14 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
         decls.add ~le
 
 
-      let name = mapEnum(n.kind, {
-        nkLetSection: "let",
-        nkVarSection: "var",
-        nkConstSection: "const"
-      })
+      let name = case n.kind:
+        of nkLetSection: tkLet
+        of nkVarSection: tkVar
+        of nkConstSection: tkConst
+        else: failNode n
 
       if decls.len == 1:
-        result = lH(lT(name & " "), decls[0])
+        result = lH(lT(name, 1), decls[0])
 
       else:
         result = lH(lT(name), lI(2, lV(decls)))
@@ -490,8 +493,8 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
       if n[2].kind == nkLambda:
         result = lV(tern(
             n[1].kind == nkEmpty,
-            lH(lT(n[0].str), lT(" = ")),
-            lH(lT(n[0].str), lT(" : "), ~n[1], lT(" = "))
+            lH(lT(n[0]), lT(" = ")),
+            lH(lT(n[0]), lT(" : "), ~n[1], lT(" = "))
           ),
           ~n[2])
       else:
@@ -517,7 +520,7 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
 
           if not(def[2] of nkTypeALiasKinds) or idx == len(n) - 1:
             if ?buffer:
-              result.add makeAlignedGrid(buffer, [sadLeft, sadLeft, sadLeft])
+              result.add initAlignedGrid(buffer, [lAlignLeft, lAlignLeft, lAlignLeft])
               result.add lS()
 
               buffer.clear()

@@ -145,11 +145,6 @@ func allFields*(def: DefTree): seq[DefField] =
 func newDef*(kind: DefTreeKind, name: DefName, node: PNode): DefTree =
   DefTree(kind: kind, defName: name, defNode: node)
 
-proc failNode*(node: PNode) {.
-    deprecated: "Temporary hack to speed up development".} =
-  echo treeRepr(nil, node, maxPath = 3)
-  assert false
-
 proc unparseName*(node: PNode): DefName =
   case node.kind:
     of nkPragmaExpr:
@@ -248,7 +243,7 @@ proc getBaseType*(node: PNode): PNode =
   if body[1].kind == nkOfInherit:
     return body[1][0]
 
-proc unparseType*(node: PNode): DefTree = 
+proc unparseType*(node: PNode): DefTree =
   let body = node[2].skipNodes({nkPtrTy, nkRefTy})
   case body.kind:
     of nkObjectTy:
@@ -328,5 +323,3 @@ proc unparseDefs*(node: PNode): seq[DefTree] =
 
     else:
       failNode node
-
-
