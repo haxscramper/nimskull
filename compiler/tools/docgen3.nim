@@ -236,11 +236,9 @@ proc updateCommon(entry: var DocEntry, decl: DefTree) =
   if decl.exported:
     entry.visibility = dvkPublic
 
-proc isFromMacro(ctx: DocContext, node: PNode): bool =
-  node.id in ctx.db.expandedNodes
 
 proc registerTopLevel(ctx: DocContext, node: PNode) =
-  if ctx.isFromMacro(node):
+  if ctx.db.isFromMacro(node):
     return
 
   case node.kind:
@@ -306,7 +304,6 @@ proc preExpand(context: PContext, expr: PNode, sym: PSym) =
 proc postExpand(context: PContext, expr: PNode, sym: PSym) =
   if context.isSkip(): return
   let ctx = DocContext(context)
-  ctx.expanded[].incl expr.id
   let last = ctx.expansionStack.pop()
   ctx.db.expansions[last].resultNode = expr.copyTree()
 
@@ -349,14 +346,12 @@ type
   DocBackend = ref object of RootObj
     db: DocDb
     sigmap: TableRef[PSym, DocId]
-    expanded: ref IntSet
 
 proc setupDocPasses(graph: ModuleGraph): DocDb =
   ## Setup necessary context (semantic and docgen passes) for module graph
   var back = DocBackend(
     sigmap: newTable[PSym, DocId](),
     db: DocDb(),
-    expanded: (ref IntSet)()
   )
 
   graph.backend = back
@@ -370,7 +365,6 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
 
         var c = DocContext(newContext(graph, module, DocContext(
           db: back.db,
-          expanded: back.expanded,
           sigmap: back.sigmap,
           docModule: newDocEntry(back.db, ndkModule, module.name.s),
           resolveHook:  SemResolveHook(resolve),

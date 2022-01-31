@@ -391,8 +391,7 @@ proc occur*(
   else:
     occur.refid = ctx[node]
 
-  ctx.newOccur(node.nodeSlice(), node.info.fileIndex, occur)
-
+  discard ctx.db.occurencies.add occur
 
 proc occur*(
     ctx: DocContext,
@@ -402,13 +401,9 @@ proc occur*(
     user: Option[DocId]
   ) =
 
-  var occur = DocOccur(kind: kind, user: user)
-
+  var occur = DocOccur(kind: kind, user: user, node: node)
   occur.refid = id
-  ctx.newOccur(node.nodeSlice(), node.info.fileIndex, occur)
-
-
-
+  discard ctx.db.occurencies.add occur
 
 proc occur*(
     ctx: DocContext,
@@ -420,7 +415,7 @@ proc occur*(
   ) =
   var occur = DocOccur(kind: kind, user: user)
   occur.refid = id
-  ctx.newOccur(parent.subslice(node), parent.info.fileIndex, occur)
+  discard ctx.db.occurencies.add occur
 
 proc occur*(
     ctx: DocContext,

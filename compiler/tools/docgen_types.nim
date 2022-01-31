@@ -9,7 +9,8 @@ import
   std/[
     options,
     intsets,
-    tables
+    tables,
+    hashes
   ]
 
 type
@@ -158,7 +159,8 @@ const
   dokLocalKinds* = {dokLocalUse .. dokLocalArgDecl }
   dokLocalDeclKinds* = { dokLocalArgDecl .. dokLocalVarDecl }
 
-declareIdType(Expansion)
+declareIdType(Expansion, addHash = true)
+declareIdType(DocOccur, addHash = true)
 
 type
   DocId* = distinct int
@@ -188,6 +190,9 @@ type
     ## type - parent composition). For local occurence - type of the
     ## identifier (for local variables, arguments etc).
     inExpansionOf*: Option[ExpansionId]
+
+    node*: PNode ## Node that occurence happened in. In the future this
+    ## should be converted to node IDs
     case kind*: DocOccurKind ## Type of entry occurence
       of dokLocalKinds:
         localId*: string
@@ -197,6 +202,9 @@ type
       else:
         refid*: DocId ## Documentable entry id
 
+declareStoreType(DocOccur)
+
+type
   DocCodeSlice* = object
     line*: int ## Code slice line /index/
     endLine*: Option[int]
@@ -361,15 +369,22 @@ type
     expandedNodes*: Table[int, ExpansionId]
     expansions*: ExpansionStore ## List of known expansion bettween
     ## open/close for module
+    occurencies*: DocOccurStore
 
   DocContext* = ref object of PContext
-    db*: DocDb
+    ## Documentation context object that is constructed for each open and
+    ## close operation.
+
+    db*: DocDb ## Documentation database that is persistent across all
+    ## processing passes
     sigmap*: TableRef[PSym, DocId]
-    docModule*: DocEntry
+    docModule*: DocEntry ## Toplevel entry - module currently being
+    ## processed
     activeUser*: DocId ## Current active user for macro expansion
     ## occurencies
-    activeExpansion*: ExpansionId
-    expanded*: ref IntSet
+    activeExpansion*: ExpansionId ## Id of the current active expansion.
+    ## Points to valid one only if the expansion stack is not empty,
+    ## otherwise stores the information about the last expansion.
     expansionStack*: seq[ExpansionId] ## Intermediate location for
     ## expansion data store - when expansion is closed it is moved to
     ## `db.expansion`
@@ -446,8 +461,17 @@ proc newDocEntry*(
   parent.nested.add result.id
 
 proc getOrNew*(db: var DocDb, kind: DocEntryKind, name: string): DocEntry =
+  ## Get new documentable entry or construct a new one
   if name in db.named:
     result = db.named[name]
 
   else:
     result = db.newDocEntry(kind, name)
+
+func isFromMacro*(db: DocDb, node: PNode): bool =
+  ## Check if the node node was created during macro expansion
+  node.id in db.expandedNodes
+
+proc getExpansion*(db: DocDb, node: PNode): ExpansionId =
+  ## Get expansion tha tnode was generated from
+  return db.expandedNodes[node.id]

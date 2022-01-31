@@ -56,7 +56,8 @@ type
     moduleId*: DocId
     user: Option[DocId]
     hasInit: bool
-
+    allowMacroNodes: bool ## Allow to record information about usages in
+    ## code generated form macro expansions.
 
 proc `+`(state: RegisterState, kind: RegisterStateKind): RegisterState =
   result = state
@@ -240,7 +241,7 @@ proc impl(
     parent: PNode
   ): Option[DocId] {.discardable.} =
 
-  if node.id in ctx.expanded[]:
+  if ctx.db.isFromMacro(node) and not state.allowMacroNodes:
     return
 
   case node.kind:
