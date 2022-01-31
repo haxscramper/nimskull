@@ -391,6 +391,8 @@ type
     toplevelExpansions*: seq[ExpansionId] ## List of toplevel macro or
     ## template expansions that were registered in the module
 
+declareStoreField(DocDb, expansions, Expansion)
+declareStoreField(DocDb, occurencies, DocOccur)
 
 func `==`*(i1, i2: DocId): bool = i1.int == i2.int
 func isValid*(id: DocId): bool = (id.int != 0)

@@ -553,5 +553,11 @@ proc registerUses*(ctx: DocContext, node: PNode, state: RegisterState) =
   discard impl(ctx, node, state, nil)
 
 proc registerExpansions*(ctx: DocContext) =
+  let db = ctx.db
   for expand in ctx.toplevelExpansions:
-    echo expand
+    echo "Call of the ", db[expand].expansionOf
+    debug db[expand].expansionOf
+    echo "Evaluated into "
+    debug db[expand].immediateResult
+    echo "Final expansions was"
+    debug db[expand].resultNode

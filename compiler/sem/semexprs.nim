@@ -29,6 +29,9 @@ proc semTemplateExpr(c: PContext, n: PNode, s: PSym,
   result = evalTemplate(n, s, getCurrOwner(c), c.config, c.cache,
                         c.templInstCounter, c.idgen, efFromHlo in flags)
 
+  if not c.expandHooks.preTemplateResem.isNil:
+    c.expandHooks.preTemplateResem(c, result, s)
+
   if efNoSemCheck notin flags:
     result = semAfterMacroCall(c, n, result, s, flags)
 
