@@ -1,9 +1,16 @@
 import
   ast/ast,
-  sem/[passes, semdata],
-  modules/modulegraphs
-
-import std/[options, intsets, tables]
+  sem/[
+    passes,
+    semdata
+  ],
+  modules/modulegraphs,
+  experimental/dod_helpers,
+  std/[
+    options,
+    intsets,
+    tables
+  ]
 
 type
   DocEntryKind* = enum
@@ -151,18 +158,26 @@ const
   dokLocalKinds* = {dokLocalUse .. dokLocalArgDecl }
   dokLocalDeclKinds* = { dokLocalArgDecl .. dokLocalVarDecl }
 
+declareIdType(Expansion)
+
 type
   DocId* = distinct int
-  ExpansionId* = distinct int
-  ExpansionData* = object
+  Expansion* = object
     ## Information about macro or template expansion
     expansionOf*: PSym ## Expanded symbol
     expandDepth*: int ## Current active macro/template expansion depth
     expandedFrom*: PNode ## Original expression that node expanded from
+    immediateResult*: PNode
     resultNode*: PNode ## Resulting expanded node
     expansionUser*: DocId ## Parent documentable entry that contained macro
     ## expansion (for toplevel entries it is a module)
+    nested*: seq[ExpansionId] ## List of the nested expansions in
+    resolveMap*: Table[int, PSym] ## Map form node ids generated in the
+    ## immediate macro expansion, to their final symbols.
 
+declareStoreType(Expansion)
+
+type
   DocOccur* = object
     ## Single occurence of documentable entry. When DOD AST and token
     ## storage is implemented
@@ -343,7 +358,7 @@ type
     currentTop*: DocEntry
     top*: seq[DocId]
     named*: Table[string, DocEntry]
-    expansions*: seq[ExpansionData] ## List of known expansion bettween
+    expansions*: ExpansionStore ## List of known expansion bettween
     ## open/close for module
 
   DocContext* = ref object of PContext
@@ -351,13 +366,14 @@ type
     sigmap*: TableRef[PSym, DocId]
     docModule*: DocEntry
     activeUser*: DocId ## Current active user for macro expansion
-                       ## occurencies
+    ## occurencies
     activeExpansion*: ExpansionId
     expanded*: ref IntSet
-    expansionStack*: seq[int] ## Intermediate location for expansion data
-    ## store - when expansion is closed it is moved to `db.expansion`
-    firstExpansion*: int ## Index of the first item for current open/close
-    ## processing run.
+    expansionStack*: seq[ExpansionId] ## Intermediate location for
+    ## expansion data store - when expansion is closed it is moved to
+    ## `db.expansion`
+    toplevelExpansions*: seq[ExpansionId] ## List of toplevel macro or
+    ## template expansions that were registered in the module
 
 
 func `==`*(i1, i2: DocId): bool = i1.int == i2.int

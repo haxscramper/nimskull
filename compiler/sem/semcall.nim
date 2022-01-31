@@ -166,16 +166,60 @@ proc maybeResemArgs*(c: PContext, n: PNode, startIdx: int = 1): seq[PNode] =
 
     result.add arg
 
-proc notFoundError(c: PContext, n: PNode, errors: seq[SemCallMismatch]): PNode =
-  ## Gives a detailed error message; this is separated from semOverloadedCall,
-  ## as semOverloadedCall is already pretty slow (and we need this information
-  ## only in case of an error).
-  ## returns an nkError
-  addInNimDebugUtils(c.config, "notFoundError", n, result)
+proc collectMismatches(
+  c: PContext, n: PNode, errors: CandidateErrors): seq[SemCallMismatch] =
+  ## Construct list of type mismatch descriptions for subsequent reporting.
+  ## This procedure simply repacks the data from CandidateErrors into
+  ## `SemCallMismatch` - discard unnecessary data, pull important elements
+  ## into the result. No actual formatting is done here.
+  for err in errors:
+    var cand = SemCallMismatch(
+      kind: err.firstMismatch.kind,
+      expression: n,
+      arguments: maybeResemArgs(c, n, 1),
+      target: err.sym,
+      targetArg: err.firstMismatch.formal,
+      arg: err.firstMismatch.arg,
+    )
+
+    if n.len > 1:
+      case cand.kind:
+        of kUnknownNamedParam,
+           kAlreadyGiven,
+           kPositionalAlreadyGiven,
+           kExtraArg,
+           kMissingParam:
+          # Additional metadata only contains `targetArg` that is
+          # unconditionally assigned from `err.formal`
+          discard
+
+        of kTypeMismatch, kVarNeeded:
+          let nArg = n[err.firstMismatch.arg]
+          assert nArg != nil
+          assert cand.targetArg != nil
+          assert cand.targetArg.typ != nil
+          assert nArg.typ != nil
+          cand.typeMismatch = c.config.typeMismatch(
+            err.firstMismatch.formal.typ, nArg.typ)
+          cand.diag = err.diag
+
+        of kUnknown:
+          # do not break 'nim check'
+          discard
+
+    result.add cand
+
+proc notFoundError(c: PContext, n: PNode, errors: CandidateErrors): PNode =
+  ## Gives a detailed error message; this is separated from
+  ## semOverloadedCall, as semOverloadedCall is already pretty slow (and we
+  ## need this information only in case of an error). returns an nkError
+  ## with different report kinds.
+  addInNimDebugUtils(c.config, "notFoundError")
   if c.config.m.errorOutputs == {}:
-    # xxx: this is a hack to detect we're evaluating a constant expression or
-    #      some other vm code, it seems
-    # fail fast:
+    # HACK this is used in order to 'speed up' the failures for the
+    # `compiles()` and similar contexts.
+
+    # QUESTION maybe we don't need to fail 'fast' here?
     result = c.config.newError(n, reportSem rsemRawTypeMismatch)
     return # xxx: under the legacy error scheme, this was a `msgs.globalReport`,
            #      which means `doRaise`, but that made sense because we did a
@@ -184,7 +228,8 @@ proc notFoundError(c: PContext, n: PNode, errors: seq[SemCallMismatch]): PNode =
     # no further explanation available for reporting
     #
     # QUESTION I wonder if it makes sense to still attempt spelling
-    # correction here.
+    # correction here, and provide better diagnostics regardless of the
+    # context we are in.
     result = c.config.newError(n, reportSem rsemExpressionCannotBeCalled)
     return
 
@@ -280,15 +325,16 @@ proc getMsgDiagnostic(
 
 proc resolveOverloads(c: PContext, n: PNode,
                       filter: TSymKinds, flags: TExprFlags,
-                      errors: var seq[SemCallMismatch]): TCandidate =
+                      errors: var CandidateErrors): TCandidate =
   addInNimDebugUtils(c.config, "resolveOverloads", n, filter, errors, result)
+  ## Find best overload candidate that matches for the node `n`. Input node
+  ## `n` is a full AST of the call - infix/prefix/command/call()
+
   var
     initialBinding: PNode
     alt: TCandidate
     f = n[0]
-  
-  case f.kind
-  of nkBracketExpr:
+  if f.kind == nkBracketExpr:
     # fill in the bindings:
     let hasError = semOpAux(c, f)
     initialBinding = f
@@ -518,6 +564,18 @@ proc tryDeref(n: PNode): PNode =
   result.typ = n.typ.skipTypes(abstractInst)[0]
   result.add n
 
+proc semOverloadedCall(
+    c: PContext, n: PNode,
+    filter: TSymKinds, flags: TExprFlags
+  ): PNode {.nosinks.} =
+  ## Anlyze a potentially overloaded call expression - `Call`, `Infix`,
+  ## `Prefix`, `Command` etc. Returns the AST of the resolved call
+  ## expression or `nkError` with a report (report itself is constructed in
+  ## `notFoundError`)
+
+  addInNimDebugUtils(c.config, "semOverloadedCall", n, result)
+  var errors: CandidateErrors
+
   var r = resolveOverloads(c, n, filter, flags, errors)
 
   if r.state != csMatch and implicitDeref in c.features and canDeref(n):
@@ -562,6 +620,9 @@ proc tryDeref(n: PNode): PNode =
 
   else:
     result = r.call
+
+  if not c.resolveHook.isNil():
+    c.resolveHook(c, n, result)
 
 proc explicitGenericInstError(c: PContext; n: PNode): PNode =
   c.config.newError(n, reportAst(rsemCannotInstantiate, n), posInfo = getCallLineInfo(n))

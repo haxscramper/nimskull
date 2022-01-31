@@ -95,6 +95,7 @@ type
       exceptSet*: IntSet         # of PIdent.id
 
   SemExpandHook* = proc(context: PContext, expr: PNode, sym: PSym)
+  SemResolveHook* = proc(context: PContext, expr, call: PNode)
 
   PContext* = ref TContext
 
@@ -689,15 +690,24 @@ type
 
     expandHooks*: tuple[
       preMacro,
+      preMacroResem,
       postMacro,
       preTemplate,
+      preTemplateResem,
       postTemplate: SemExpandHook
     ] ## Optional hooks to call before/after macro/template expansion is
       ## called. Necessary for user-provided extensions for the macro
       ## expansion logging. Post-expand hooks are called after
       ## `semAfterMacroCall` is called, so supplied AST should be correctly
       ## analyzed, and all repeated macro expansion inside of the body
-      ## happen in the nested manner.
+      ## happen in the nested manner. Pre-resem procs are called
+      ## immediately after evaluation on the resulting AST.
+
+
+    resolveHook*: SemResolveHook ## `preResolve` and `postResolve` procs
+    ## are called in the `semOverloadedCall` on the start and finish of the
+    ## resolution process. Note that call result might contain error nodes
+    ## if overloading fails.
 
 template config*(c: PContext): ConfigRef = c.graph.config
 

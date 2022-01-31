@@ -600,6 +600,9 @@ proc semMacroExpr(c: PContext, n: PNode, sym: PSym,
   result = evalMacroCall(
     c.module, c.idgen, c.graph, c.templInstCounter, n, sym)
 
+  if not c.expandHooks.preMacroResem.isNil:
+    c.expandHooks.preMacroResem(c, result, sym)
+
   if efNoSemCheck notin flags:
     result = semAfterMacroCall(c, n, result, sym, flags)
 
@@ -667,27 +670,6 @@ proc isImportSystemStmt(g: ModuleGraph; n: PNode): bool =
       if f == g.systemModule.info.fileIndex:
         return true
   else: discard
-
-proc isEmptyTree*(n: PNode): bool =
-  ## true if `n` is empty that shouldn't count as a top level statement.
-  ## Explicit `Empty` nodes, nil nodes, comment statements and statement
-  ## lists with all nodes empty (checked recursively)
-  if n.isNil:
-    return true
-
-  else:
-    case n.kind
-    of nkStmtList:
-      for it in n:
-        if not isEmptyTree(it):
-          return false
-
-      result = true
-    of nkEmpty, nkCommentStmt:
-      result = true
-
-    else:
-      result = false
 
 proc semStmtAndGenerateGenerics(c: PContext, n: PNode): PNode =
   ## given top level statements from a module, carries out semantic analysis:

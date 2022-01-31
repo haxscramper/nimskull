@@ -325,6 +325,45 @@ proc subslice(parent, node: PNode): DocCodeSlice =
     else:
       result = main
 
+proc startPos*(node: PNode): TLineInfo =
+  case node.kind:
+    of nkTokenKinds:
+      result = node.info
+
+    of nkAccQuoted:
+      result = node[0].startPos()
+
+    else:
+      result = node[0].startPos()
+
+proc finishPos*(node: PNode): TLineInfo =
+  case node.kind:
+    of nkTokenKinds:
+      result = node.info
+      result.col += len($node).int16 - 1
+
+    of nkAccQuoted:
+      result = node.info
+      result.col += len($node).int16
+
+    else:
+      if len(node) > 0:
+        var idx = len(node) - 1
+        while idx >= 0 and node[idx].kind in {nkEmpty}:
+          dec idx
+
+        if idx >= 0:
+          result = node[idx].finishPos()
+
+        else:
+          result = node.info
+
+      else:
+        result = node.info
+
+proc nodeExtent*(node: PNode): DocExtent =
+  result.start = startPos(node)
+  result.finish = finishPos(node)
 
 proc newOccur(
     ctx: DocContext,
