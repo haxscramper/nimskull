@@ -236,8 +236,12 @@ proc updateCommon(entry: var DocEntry, decl: DefTree) =
   if decl.exported:
     entry.visibility = dvkPublic
 
+proc isFromMacro(ctx: DocContext, node: PNode): bool =
+  node.id in ctx.db.expandedNodes
 
 proc registerTopLevel(ctx: DocContext, node: PNode) =
+  if ctx.isFromMacro(node):
+    return
 
   case node.kind:
     of nkProcDeclKinds:
@@ -305,6 +309,15 @@ proc postExpand(context: PContext, expr: PNode, sym: PSym) =
   ctx.expanded[].incl expr.id
   let last = ctx.expansionStack.pop()
   ctx.db.expansions[last].resultNode = expr.copyTree()
+
+  proc aux(n: PNode) =
+    ctx.db.expandedNodes[n.id] = last
+    if 0 < safeLen(n):
+      for sub in items(n):
+        aux(sub)
+
+  if not ctx.inExpansion():
+    aux(expr)
 
 proc preResem(context: PContext, expr: PNode, sym: PSym) =
   if context.isSkip(): return

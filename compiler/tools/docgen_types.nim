@@ -358,6 +358,7 @@ type
     currentTop*: DocEntry
     top*: seq[DocId]
     named*: Table[string, DocEntry]
+    expandedNodes*: Table[int, ExpansionId]
     expansions*: ExpansionStore ## List of known expansion bettween
     ## open/close for module
 
