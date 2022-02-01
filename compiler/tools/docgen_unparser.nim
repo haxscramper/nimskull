@@ -7,7 +7,8 @@ import
   utils/[
     astrepr
   ],
-  ./docgen_file_tracking
+  ./docgen_file_tracking,
+  ./docgen_ast_aux
 
 type
   DefTreeKind* = enum

@@ -24,6 +24,7 @@ import
   ./docgen_file_tracking,
   ./docgen_use_registration,
   ./docgen_unparser,
+  ./docgen_ast_aux,
   std/[
     options,
     tables,
