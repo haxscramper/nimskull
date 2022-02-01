@@ -56,7 +56,11 @@ type
 
   NimFormatConf* = object
     flags*: set[NimFormatFlag]
-    baseIndent*: int
+
+  FormatStrStore* = ref object
+    strs: seq[string]
+
+func newStrStore*(): FormatStrStore = new(result)
 
 const
   defaultNimFormatConf* = NimFormatConf(
@@ -75,12 +79,15 @@ func contains*(conf: NimFormatConf, flags: set[NimFormatFlag]): bool =
   len(flags * conf.flags) == len(flags)
 
 
-proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock
-template `~`(node: PNode): untyped = toLytBlock(node, conf)
+proc toLytBlock(
+  n: PNode, conf: NimFormatConf, store: var FormatStrStore): LytBlock
+
+template `~`(node: PNode): untyped = toLytBlock(node, conf, store)
 
 const
   NodesStr = LytStrIdMask(0)
   TokenStr = LytStrIdMask(1)
+  LiterStr = LytStrIdMask(2)
 
 
 proc toLytStr(count: int): LytStr =
@@ -96,12 +103,19 @@ proc toLytStr(node: PNode): LytStr =
   result.id = LytStrId(node.id)
   result.id.setMask(NodesStr)
 
+proc toLytStr(store: var FormatStrStore, str: string): LytStr =
+  result.id = toLytStrId(store.strs.len)
+  store.strs.add str
+  result.len = str.len
+  result.id.setMask(LiterStr)
+
 type
   NimFormatEventKind* = enum
     nimEvFormatNode
     nimEvFormatToken
     nimEvFormatNewline
     nimEvFormatSpaces
+    nimEvFormatStr
 
   NimFormatEvent* = object
     case kind*: NimFormatEventKind
@@ -117,8 +131,12 @@ type
       of nimEvFormatNode:
         node*: int
 
+      of nimEvFormatStr:
+        str*: string
 
-iterator nimFormatEvents(lyt: Layout): NimFormatEvent =
+
+iterator nimFormatEvents(
+    lyt: Layout, store: FormatStrStore): NimFormatEvent =
   for ev in formatEvents(lyt):
     var event: NimFormatEvent
     case ev.kind:
@@ -140,6 +158,11 @@ iterator nimFormatEvents(lyt: Layout): NimFormatEvent =
               kind: nimEvFormatNode,
               node: ev.str.id.popMask().int)
 
+          of LiterStr.int:
+            event = NimFormatEvent(
+              kind: nimEvFormatStr,
+              str: store.strs[ev.str.id.popMask().toIndex])
+
           else:
             assert false, "Malformed layout string mask: " & $ev.str.id
 
@@ -152,26 +175,35 @@ proc lTX(args: varargs[LytStr, toLytStr]): LytStrSpan =
   lytStrSpan(args)
 
 proc lytInfix(
-    n: PNode, conf: NimFormatConf, spacing: bool = true): LytBlock =
+    n: PNode,
+    conf: NimFormatConf,
+    store: var FormatStrStore,
+    spacing: bool = true
+  ): LytBlock =
 
   if n.kind == nkInfix:
     if spacing:
       result = lH(
-        lytInfix(n[1], conf),
+        lytInfix(n[1], conf, store),
         lT(1, n[0], 1),
-        lytInfix(n[2], conf)
+        lytInfix(n[2], conf, store)
       )
 
     else:
-      result = lH(lytInfix(n[1], conf), lT(n[0]), lytInfix(n[2], conf))
+      result = lH(
+        lytInfix(n[1], conf, store),
+        lT(n[0]),
+        lytInfix(n[2], conf, store)
+      )
 
   else:
-    result = toLytBlock(n, conf)
+    result = toLytBlock(n, conf, store)
 
 proc lytFormalParams(
     n: PNode,
     vertical: bool,
-    conf: NimFormatConf
+    conf: NimFormatConf,
+    store: var FormatStrStore
   ): LytBlock =
 
   assertKind(n, {nkFormalParams})
@@ -188,20 +220,25 @@ proc lytFormalParams(
     var hor = lH(lT(alignLeft(lTX(arg[0], tkColon, 1), argPad)), lT(arg[1]))
     if not(arg[2] of nkEmpty):
       hor.add lT(1, tkEquals, 1)
-      hor.add toLytBlock(arg[2], conf)
+      hor.add ~arg[2]
 
     if idx < n.high - 1:
       hor &= tern(vertical, lT(tkComma), lT(tkComma, 1))
 
     result.add hor
 
-proc lytFormalReturnClose(n: PNode, conf: NimFormatConf): LytBlock =
+proc lytFormalReturnClose(
+    n: PNode, 
+    conf: NimFormatConf, 
+    store: var FormatStrStore
+  ): LytBlock =
+
   assertKind(n, {nkFormalParams})
   if n[0] of nkEmpty:
     lT(tkParRi)
 
   else:
-    lH(lT(tkParRi, tkColon, 1), toLytBlock(n[0], conf))
+    lH(lT(tkParRi, tkColon, 1), ~n[0])
 
 
 proc lytDocComment(n: PNode, prefix: string = ""): LytBlock =
@@ -213,25 +250,33 @@ proc lytDocComment(n: PNode, prefix: string = ""): LytBlock =
   # else:
   result = lE()
 
-proc lytCsv(n: PNode | seq[PNode], vertical: bool, conf: NimFormatConf): LytBlock =
+proc lytCsv(
+    n: PNode | seq[PNode],
+    vertical: bool,
+    conf: NimFormatConf,
+    store: var FormatStrStore
+  ): LytBlock =
+
   result = tern(vertical, lV(), lH())
   if vertical:
     for idx, item in n:
       result.add tern(
         idx < len(n) - 1,
-        lH(toLytBlock(item, conf), lT(tkComma, 1)),
-        toLytBlock(item, conf)
+        lH(~item, lT(tkComma, 1)),
+        ~item
       )
 
   else:
     for idx, item in n:
       result.add tern(
         idx > 0,
-        lH(lT(tkComma, 1), toLytBlock(item, conf)),
-        toLytBlock(item, conf)
+        lH(lT(tkComma, 1), ~item),
+        ~item
       )
 
-proc lytTypedefHead(n: PNode, conf: NimFormatConf): LytBlock =
+proc lytTypedefHead(
+    n: PNode, conf: NimFormatConf, store: var FormatStrStore): LytBlock =
+
   if n[0] of nkPragmaExpr:
     lH(~n[0][0], ~n[1], lT(1), ~n[0][1])
 
@@ -243,8 +288,9 @@ const
     nkIdent, nkPtrTy, nkRefTy, nkBracketExpr}
 
 
-proc lytTypedef(n: PNode, conf: NimFormatConf): LytBlock =
-  var head = lytTypedefHead(n, conf)
+proc lytTypedef(
+    n: PNode, conf: NimFormatConf, store: var FormatStrStore): LytBlock =
+  var head = lytTypedefHead(n, conf, store)
   head.add lT(1, tkEquals, 1)
 
   case n[2].kind:
@@ -324,12 +370,14 @@ proc lytTypedef(n: PNode, conf: NimFormatConf): LytBlock =
       failNode n[2]
 
 
-proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
+proc toLytBlock(
+    n: PNode, conf: NimFormatConf, store: var FormatStrStore): LytBlock =
+
   case n.kind:
     of nkProcTy:
       result = lV(lH(lT(tkProc, tkParLe),
-          lytFormalParams(n[0], true, conf),
-          lytFormalReturnClose(n[0], conf),
+          lytFormalParams(n[0], true, conf, store),
+          lytFormalReturnClose(n[0], conf, store),
           lT(1),
           ~n[1]))
 
@@ -354,8 +402,8 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
       # proc q*(a: B): C {.d.} =
       #   e
       result.add lV(lH(lH(lT(kindName), lS(), ~n[0], ~n[1], ~n[2], lT(tkParLe)),
-          lytFormalParams(n[3], false, conf),
-          lytFormalReturnClose(n[3], conf),
+          lytFormalParams(n[3], false, conf, store),
+          lytFormalReturnClose(n[3], conf, store),
           if n[4] of nkEmpty: lS() else: lH(lT(1), ~n[4]),
           if n[6] of nkEmpty: lS() else: lT(1, tkEquals, 1)),
         lV(lytDocComment(n), lI(2, ~n[6])),
@@ -368,8 +416,8 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
         #   ): C {.d.} =
         #     e
         result.add lV(lH(lT(kindName), lS(), ~n[0], ~n[1], ~n[2], lT(tkParLe)),
-          lI(4, lytFormalParams(n[3], true, conf)),
-          lH(lI(2, lytFormalReturnClose(n[3], conf)),
+          lI(4, lytFormalParams(n[3], true, conf, store)),
+          lH(lI(2, lytFormalReturnClose(n[3], conf, store)),
             if n[4] of nkEmpty: lS() else: lH(lT(1), ~n[4]),
             if n[6] of nkEmpty: lS() else: lT(1, tkEquals, 1)),
           lytDocComment(n),
@@ -460,7 +508,11 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
         for arm in n[1 .. ^1]:
           if arm of nkOfBranch:
             ofarms.add @[
-              lH(lT(tkOf, 1), lytCsv(arm[0 .. ^2], false, conf), lT(tkColon, 1)),
+              lH(
+                lT(tkOf, 1),
+                lytCsv(arm[0 .. ^2], false, conf, store),
+                lT(tkColon, 1)
+              ),
               ~arm[^1]
             ]
 
@@ -560,7 +612,7 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
         var buffer: seq[seq[LytBlock]]
         for idx, def in n:
           if def[2] of nkTypeAliasKinds:
-            buffer.add @[lytTypedefHead(def, conf), lT(1, tkEquals, 1), ~def[2]]
+            buffer.add @[lytTypedefHead(def, conf, store), lT(1, tkEquals, 1), ~def[2]]
             buffer.add @[lS()]
 
           if not(def[2] of nkTypeAliasKinds) or idx == len(n) - 1:
@@ -577,7 +629,7 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
         result = lV(lT(tkType), lI(2, result))
 
     of nkTypeDef:
-      result = lytTypedef(n, conf)
+      result = lytTypedef(n, conf, store)
 
     of nkPragmaExpr:
       result = lH(~n[0], lT(1), ~n[1])
@@ -616,8 +668,10 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
       var imports = lV()
       for idx, path in n:
         if path of nkInfix:
-          imports.add lH(lytInfix(path, conf, spacing = false),
-            tern(idx < n.len - 1, lT(tkComma), lS()))
+          imports.add lH(
+            lytInfix(path, conf, store, spacing = false),
+            tern(idx < n.len - 1, lT(tkComma), lS())
+          )
 
         else:
           imports.add ~path
@@ -644,7 +698,7 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
     of nkExprColonExpr: result = lH(~n[0], lT(tkColon, 1), ~n[1])
     of nkPrefix: result        = lH(~n[0], ~n[1])
     of nkPostfix: result       = lH(~n[1], ~n[0])
-    of nkInfix: result         = lytInfix(n, conf)
+    of nkInfix: result         = lytInfix(n, conf, store)
     of nkIdent: result         = lT(n)
     of nkDotExpr: result       = lH(~n[0], lT(tkDot), ~n[1])
     of nkEmpty: result         = lS()
@@ -658,11 +712,21 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
     of nkAsgn: result = lH(~n[0], lT(1, tkEquals, 1), ~n[1])
 
     of nkBracket:
-      result = lC(lH(lT(tkBracketLe), lytCsv(n, false, conf), lT(tkBracketRi)),
-        lV(lT(tkBracketLe), lI(2, lytCsv(n, true, conf)), lT(tkBracketRi)))
+      result = lC(
+        lH(
+          lT(tkBracketLe),
+          lytCsv(n, false, conf, store),
+          lT(tkBracketRi)),
+        lV(
+          lT(tkBracketLe),
+          lI(2, lytCsv(n, true, conf, store)),
+          lT(tkBracketRi)))
 
     of nkGenericParams:
-      result = lH(lT(tkBracketLe), lytCsv(n, false, conf), lT(tkBracketRi))
+      result = lH(
+        lT(tkBracketLe),
+        lytCsv(n, false, conf, store),
+        lT(tkBracketRi))
 
     of nkCast:
       if n[0] of nkEmpty:
@@ -679,35 +743,60 @@ proc toLytBlock(n: PNode, conf: NimFormatConf): LytBlock =
 
     of nkCurly:
       if len(n) > 6:
-        result = lV(lT(tkCurlyLe), lI(2, lytCsv(n, true, conf)), lT(tkCurlyRi))
+        result = lV(
+          lT(tkCurlyLe),
+          lI(2, lytCsv(n, true, conf, store)),
+          lT(tkCurlyRi))
 
       else:
-        result = lH(lT(tkCurlyLe), lytCsv(n, false, conf), lT(tkCurlyRi))
+        result = lH(
+          lT(tkCurlyLe),
+          lytCsv(n, false, conf, store),
+          lT(tkCurlyRi))
 
 
     of nkBlockStmt:
-      result = lV(lH(lT(tkBlock), tern(n[0].isEmptyTree(), lE(), lH(lT(1), ~n[0])), lT(tkColon)),
+      result = lV(
+        lH(lT(tkBlock), tern(n[0].isEmptyTree(), lE(), lH(lT(1), ~n[0])), lT(tkColon)),
         lI(2, ~n[1]))
 
     of nkBracketExpr:
       result = lH(
         ~n[0],
         lT(tkBracketLe),
-        lytCsv(n[1..^1], false, conf),
+        lytCsv(n[1..^1], false, conf, store),
         lT(tkBracketRi)
       )
 
     of nkPar:
-      result = lH(lT(tkParLe), lytCsv(n[0..^1], false, conf), lT(tkParRi))
+      result = lH(
+        lT(tkParLe),
+        lytCsv(n[0..^1], false, conf, store),
+        lT(tkParRi))
 
     of nkCommand:
-      result = lH(~n[0], lT(1), lytCsv(n[1..^1], false, conf))
+      result = lH(
+        ~n[0],
+        lT(1),
+        lytCsv(n[1..^1], false, conf, store))
 
     of nkCall:
-      result = lH(~n[0], lT(tkParLe), lytCsv(n[1..^1], false, conf), lT(tkParRi))
+      result = lH(
+        ~n[0],
+        lT(tkParLe),
+        lytCsv(n[1..^1], false, conf, store),
+        lT(tkParRi))
 
     of nkPragmaBlock:
       result = lV(lH(~n[0], lT(tkColon)), lI(2, ~n[1]))
+
+    of nkTupleConstr:
+      result = lH(lT(tkParLe))
+      for idx, item in n:
+        if 0 < idx: result.add lT(tkComma, 1)
+        result.add ~item
+
+      result.add lT(tkParRi)
 
     else:
       failNode n
@@ -729,8 +818,14 @@ when isMainModule:
     return parseString(s, cache, conf)
 
   proc reformat(s: string): string =
-    var known: Table[int, PNode]
+
+    # Input node - can come from any location, for the purposes of testing
+    # using `parse()` here directly
     let node = parse(s)
+
+    # This is a temporary workaround until it there is other way to do
+    # `NodeId` -> `Node` mapping
+    var known: Table[int, PNode]
     proc aux(n: PNode) =
       known[n.id] = n
       if 0 < safeLen(n):
@@ -738,34 +833,55 @@ when isMainModule:
           aux(sub)
 
     aux(node)
+
+
     debug node
-    let blc = toLytBlock(node, defaultNimFormatConf)
-    echo blc.treeRepr(
-      proc(s: LytStr): string =
-        if s.isSpaces():
-          $s.len & " spaces"
+    # Convert node to the layout block treee
+    var store = newStrStore()
+    let blc = lV(
+      lT(store.toLytStr("# Random input text")),
+      toLytBlock(node, defaultNimFormatConf, store))
+
+    proc getStr(s: LytStr): string =
+      if s.isSpaces():
+        $s.len & " spaces"
+
+      else:
+        if s.id.getMask() == TokenStr:
+          "tok '" & $s.id.popMask().int.TokType & "'"
 
         else:
-          if s.id.getMask() == TokenStr:
-            "tok '" & $s.id.popMask().int.TokType & "'"
+          "node #" & $s.id.popMask().int
 
-          else:
-            "node #" & $s.id.popMask().int
-    )
+
+    echo blc.treeRepr(getStr)
 
     let opts = initLytOptions()
+
+    # Select optimal layout of all the ones presented
     let lyt = toLayout(blc, opts)
-    for ev in nimFormatEvents(lyt):
+
+    echo lyt.treeRepr(getStr)
+
+    # Iterate over layout formatting events
+    for ev in nimFormatEvents(lyt, store):
       case ev.kind:
+        # Indentation/separator spaces
         of nimEvFormatSpaces:
           result.add repeat(" ", ev.spaces)
 
+        # Layout newline - tokens themselves can't contain newlines
         of nimEvFormatNewline:
           result.add "\n"
 
+        # Format regular token: `ev.token` is a `lexer.TokType`
         of nimEvFormatToken:
           result.add $ev.token
 
+        of nimEvFormatStr:
+          result.add $ev.str
+
+        # Format token node - ident, symbol, integer or any other literal
         of nimEvFormatNode:
           let node = known[ev.node]
           case node.kind:
@@ -784,5 +900,5 @@ when isMainModule:
             else:
               result.add $node
 
-  echo reformat("a = 12")
-  echo reformat("for i in 0 .. 10: echo i")
+  echo reformat("a = (12, 2)\nb = 2")
+  # echo reformat("for i in 0 .. 10: echo i")
