@@ -345,15 +345,13 @@ proc resolve(context: PContext, expr, call: PNode) =
 
 type
   DocBackend = ref object of RootObj
+    ## User to transfer persistent data (database) between open/close pairs
+    ## for the semantic pass.
     db: DocDb
-    sigmap: TableRef[PSym, DocId]
 
 proc setupDocPasses(graph: ModuleGraph): DocDb =
   ## Setup necessary context (semantic and docgen passes) for module graph
-  var back = DocBackend(
-    sigmap: newTable[PSym, DocId](),
-    db: DocDb(),
-  )
+  var back = DocBackend(db: DocDb())
 
   graph.backend = back
 
@@ -363,10 +361,8 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
         graph: ModuleGraph, module: PSym, idgen: IdGenerator
       ): PPassContext {.nimcall.} =
         var back = DocBackend(graph.backend)
-
         var c = DocContext(newContext(graph, module, DocContext(
           db: back.db,
-          sigmap: back.sigmap,
           docModule: newDocEntry(back.db, ndkModule, module.name.s),
           resolveHook:  SemResolveHook(resolve),
           expandHooks: (
@@ -379,7 +375,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
 
         c.activeUser = c.docModule.id
         c.docModule.visibility = dvkPublic
-        back.sigmap[module] = c.docModule.id
+        back.db.sigmap[module] = c.docModule.id
 
         return semPassSetupOpen(c, graph, module, idgen)
     ),

@@ -18,6 +18,8 @@ import
 when not defined(useNodeIds):
   {.error: "Code renderer must be compiled with node ids".}
 
+export text_layouter 
+
 initBlockFormatDSL()
 
 proc max(args: varargs[int]): int =
@@ -79,7 +81,7 @@ func contains*(conf: NimFormatConf, flags: set[NimFormatFlag]): bool =
   len(flags * conf.flags) == len(flags)
 
 
-proc toLytBlock(
+proc toLytBlock*(
   n: PNode, conf: NimFormatConf, store: var FormatStrStore): LytBlock
 
 template `~`(node: PNode): untyped = toLytBlock(node, conf, store)
@@ -89,6 +91,9 @@ const
   TokenStr = LytStrIdMask(1)
   LiterStr = LytStrIdMask(2)
 
+
+proc toLytStr(str: LytStr): LytStr =
+  str
 
 proc toLytStr(count: int): LytStr =
   lytSpaces(count)
@@ -135,7 +140,7 @@ type
         str*: string
 
 
-iterator nimFormatEvents(
+iterator nimFormatEvents*(
     lyt: Layout, store: FormatStrStore): NimFormatEvent =
   for ev in formatEvents(lyt):
     var event: NimFormatEvent
@@ -370,7 +375,7 @@ proc lytTypedef(
       failNode n[2]
 
 
-proc toLytBlock(
+proc toLytBlock*(
     n: PNode, conf: NimFormatConf, store: var FormatStrStore): LytBlock =
 
   case n.kind:
@@ -401,7 +406,8 @@ proc toLytBlock(
 
       # proc q*(a: B): C {.d.} =
       #   e
-      result.add lV(lH(lH(lT(kindName), lS(), ~n[0], ~n[1], ~n[2], lT(tkParLe)),
+      result.add lV(
+        lH(lH(lT(kindName, 1), lS(), ~n[0], ~n[1], ~n[2], lT(tkParLe)),
           lytFormalParams(n[3], false, conf, store),
           lytFormalReturnClose(n[3], conf, store),
           if n[4] of nkEmpty: lS() else: lH(lT(1), ~n[4]),
@@ -415,7 +421,8 @@ proc toLytBlock(
         #     a: B
         #   ): C {.d.} =
         #     e
-        result.add lV(lH(lT(kindName), lS(), ~n[0], ~n[1], ~n[2], lT(tkParLe)),
+        result.add lV(
+          lH(lT(kindName, 1), lS(), ~n[0], ~n[1], ~n[2], lT(tkParLe)),
           lI(4, lytFormalParams(n[3], true, conf, store)),
           lH(lI(2, lytFormalReturnClose(n[3], conf, store)),
             if n[4] of nkEmpty: lS() else: lH(lT(1), ~n[4]),
@@ -423,47 +430,6 @@ proc toLytBlock(
           lytDocComment(n),
           lI(2, ~n[6]),
           lS())
-
-      when false:
-        # proc q*(a: B):
-        #     C {.d.} =
-        #   e
-        result.add lV(lH(headLyt, horizArgsLyt, postArgs),
-          lI(2, lH(retLyt, pragmaLyt, eq)), implLyt)
-
-        # proc q*(a: B):
-        #     C
-        #     {.d.} =
-        #   e
-        result.add lV(lH(headLyt, horizArgsLyt, postArgs),
-          lI(2, retLyt),
-          lI(2, lH(pragmaLyt, eq)),
-          implLyt)
-
-        if vertArgsLyt.len > 0:
-          # proc q*(
-          #     a: B
-          #   ): C {.d.} =
-          #     e
-          result.add lV(headLyt,
-            lI(4, vertArgsLyt),
-            lI(2, lH(postArgs, retLyt, pragmaLyt, eq)),
-            lS(),
-            lI(2, implLyt))
-
-          # proc q*(
-          #       a: B
-          #   ):
-          #     C
-          #     {.d.} =
-          #   e
-          result.add lV(headLyt,
-            tern(vertArgsLyt.len == 0, lE(), vertArgsLyt),
-            postArgs,
-            lI(2, retLyt),
-            lI(2, lH(pragmaLyt, eq)),
-            implLyt
-          )
 
     of nkStmtList:
       result = lV()
@@ -693,23 +659,27 @@ proc toLytBlock(
         discard
         # result.add lH(lT("## " & line))
 
-    of nkExprEqExpr: result = lH(~n[0], lT(1, tkEquals, 1), ~n[1])
-
+    of nkExprEqExpr:    result = lH(~n[0], lT(1, tkEquals, 1), ~n[1])
     of nkExprColonExpr: result = lH(~n[0], lT(tkColon, 1), ~n[1])
-    of nkPrefix: result        = lH(~n[0], ~n[1])
-    of nkPostfix: result       = lH(~n[1], ~n[0])
-    of nkInfix: result         = lytInfix(n, conf, store)
-    of nkIdent: result         = lT(n)
-    of nkDotExpr: result       = lH(~n[0], lT(tkDot), ~n[1])
-    of nkEmpty: result         = lS()
-    of nkIntLit: result        = lT(n)
-    of nkPtrTy: result         = lH(lT(tkPtr, 1), ~n[0])
-    of nkStrLit: result        = lT(n)
-    of nkNilLit: result        = lT(tkNil)
-    of nkReturnStmt: result    = lH(lT(tkReturn, 1), ~n[0])
-    of nkBreakStmt: result     = lH(lT(tkBreak, 1), ~n[0])
-    of nkDiscardStmt: result   = lH(lT(tkDiscard, 1), ~n[0])
-    of nkAsgn: result = lH(~n[0], lT(1, tkEquals, 1), ~n[1])
+    of nkPrefix:        result = lH(~n[0], ~n[1])
+    of nkPostfix:       result = lH(~n[1], ~n[0])
+    of nkInfix:         result = lytInfix(n, conf, store)
+    of nkIdent, nkSym:  result = lT(n)
+    of nkDotExpr:       result = lH(~n[0], lT(tkDot), ~n[1])
+    of nkEmpty:         result = lS()
+    of nkIntLit:        result = lT(n)
+    of nkPtrTy:         result = lH(lT(tkPtr, 1), ~n[0])
+    of nkStrLit:        result = lT(n)
+    of nkNilLit:        result = lT(tkNil)
+    of nkReturnStmt:    result = lH(lT(tkReturn, 1), ~n[0])
+    of nkBreakStmt:     result = lH(lT(tkBreak, 1), ~n[0])
+    of nkDiscardStmt:   result = lH(lT(tkDiscard, 1), ~n[0])
+    of nkAsgn:          result = lH(~n[0], lT(1, tkEquals, 1), ~n[1])
+
+    of nkHiddenStdConv:
+      # QUESTION - formatting hidden nodes such as std conversion, up/down
+      # cost and so on might 
+      result = ~n[1]
 
     of nkBracket:
       result = lC(
@@ -797,6 +767,7 @@ proc toLytBlock(
         result.add ~item
 
       result.add lT(tkParRi)
+
 
     else:
       failNode n

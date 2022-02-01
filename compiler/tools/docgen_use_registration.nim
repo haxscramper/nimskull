@@ -553,12 +553,173 @@ proc impl(
 proc registerUses*(ctx: DocContext, node: PNode, state: RegisterState) =
   discard impl(ctx, node, state, nil)
 
+type
+  CodeWriter = object
+    code: DocCode ## Final chunk of the code to write out
+    line: int ## Current active line *index*
+    column: int ## Current column
+    indent: int ## Relative indentation - used for arranging multiple
+    ## chunks of macro expansion code, not for indentation-based
+    ## formatting.
+
+
+proc last(writer: var CodeWriter): var DocCodeLine =
+  if writer.code.codeLines.len == 0:
+    writer.code.codeLines.add newCodeLine(writer.line, "")
+
+  writer.code.codeLines[^1]
+
+proc lastPart(line: var DocCodeLine): var DocCodePart = line.parts[^1]
+
+proc add*(line: var DocCodeLine, text: string) =
+  line.text.add text
+  line.lineHigh += text.len
+
+proc expandLastPart(line: var DocCodeLine) =
+  ## Expand the last part of the line to it's maximum height
+  line.lastPart().slice.column.b = line.lineHigh
+
+proc add(writer: var CodeWriter, text: string) =
+  ## Add piece of unformatted text to the last line, expanding last
+  ## occurence if it does not have any occurence information
+  writer.last.add text
+  writer.column += text.len
+  if writer.last().lastPart().occur.isNone():
+    writer.last().expandLastPart()
+
+proc addLine(writer: var CodeWriter) =
+  ## Add new empty line to the code writer, accounting for active
+  ## indentation
+  writer.code.codeLines.add newCodeLine(writer.line, "")
+  inc writer.line
+  writer.column = 0
+  writer.add(repeat(" ", writer.indent))
+
+proc add(writer: var CodeWriter, text: string, occur: DocOccur) =
+  let line = writer.line
+  let start = writer.column
+  add(writer, text)
+  let finish = writer.column
+  writer.last.parts.add newCodePart(
+    initDocSlice(line, start, finish), occur)
+
+
+proc writeCode(
+    db: DocDb, 
+    node: PNode, 
+    writer: var CodeWriter, 
+    expand: ExpansionId
+  ) =
+  ## Write out expanded node into the final chunks of text, adding
+  ## occurence information
+  var known: Table[int, PNode]
+  proc aux(n: PNode) =
+    known[n.id] = n
+    if 0 < safeLen(n):
+      for sub in n:
+        aux(sub)
+
+  aux(node)
+
+  debug node
+
+  var
+    store = newStrStore()
+    opts = initLytOptions()
+    conf = defaultNimFormatConf
+
+  let
+    blc = toLytBlock(node, conf, store)
+    lyt = toLayout(blc, opts)
+
+  for ev in nimFormatEvents(lyt, store):
+    case ev.kind:
+      # Indentation/separator spaces
+      of nimEvFormatSpaces:
+        writer.add repeat(" ", ev.spaces)
+
+      # Layout newline - tokens themselves can't contain newlines
+      of nimEvFormatNewline:
+        writer.addLine()
+
+      # Format regular token: `ev.token` is a `lexer.TokType`
+      of nimEvFormatToken:
+        writer.add $ev.token
+
+      of nimEvFormatStr:
+        writer.add $ev.str
+
+      # Format token node - ident, symbol, integer or any other literal
+      of nimEvFormatNode:
+        let node = known[ev.node]
+        # TODO First check if node is tracked by the sigmatch hook data
+
+        case node.kind:
+          of nkIdent:
+            writer.add node.ident.s
+
+          of nkSym:
+            let id = db[node.sym]
+            # TODO Occurence information can be added here,
+            if id.isValid():
+              writer.add(node.sym.name.s, DocOccur(
+                inExpansionOf: some expand,
+                kind: dokInMacroExpansion,
+                refid: id
+              ))
+
+            else:
+              writer.add(node.sym.name.s)
+
+          of nkFloatLiterals:
+            writer.add $node.floatVal
+
+          of nkIntKinds:
+            writer.add $node.intVal
+
+          else:
+            writer.add $node
+
+
+proc writeCode(
+    db: DocDb,
+    expand: ExpansionId,
+    writer: var CodeWriter
+  ) =
+  ## Recursively write information about macro expansion to the code
+  template nl() =
+    writer.addLine()
+
+  template writeCode(node: PNode) =
+    writer.indent += 2
+    nl()
+    db.writeCode(node, writer, expand)
+    writer.indent -= 2
+    nl()
+
+  writer.add "# Expansion of the "
+  writer.add $db[expand].expansionOf
+  nl()
+  writeCode(db[expand].expandedFrom)
+  nl()
+  writer.add "# Evaluated into "
+  nl()
+  writeCode(db[expand].immediateResult)
+  nl()
+  writer.add "# Final expansions was"
+  nl()
+  writeCode(db[expand].resultNode)
+  nl()
+
+
 proc registerExpansions*(ctx: DocContext) =
   let db = ctx.db
+  var writer = CodeWriter()
   for expand in ctx.toplevelExpansions:
-    echo "Call of the ", db[expand].expansionOf
-    debug db[expand].expansionOf
-    echo "Evaluated into "
-    debug db[expand].immediateResult
-    echo "Final expansions was"
-    debug db[expand].resultNode
+    db.writeCode(expand, writer)
+
+  for line in writer.code.codeLines:
+    echo line.text
+    for part in line.parts:
+      if part.occur.isSome():
+        echo "> ", part

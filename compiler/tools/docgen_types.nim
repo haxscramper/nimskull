@@ -10,7 +10,8 @@ import
     options,
     intsets,
     tables,
-    hashes
+    hashes,
+    strformat
   ]
 
 type
@@ -154,6 +155,8 @@ type
     dokExported
     dokIncluded
 
+    dokInMacroExpansion
+
 
 const
   dokLocalKinds* = {dokLocalUse .. dokLocalArgDecl }
@@ -206,9 +209,10 @@ declareStoreType(DocOccur)
 
 type
   DocCodeSlice* = object
+    ## Single continious slice of the code - line:col-start:col-end
+    ## information
     line*: int ## Code slice line /index/
-    endLine*: Option[int]
-    column*: Slice[int]
+    column*: Slice[int] ## Column slice - start and stop position
 
   DocCodePart* = object
     ## Single code part with optional occurence link.
@@ -216,16 +220,18 @@ type
     occur*: Option[DocOccur] ## 'link' to documentable entry
 
   DocCodeLine* = object
-    lineHigh*: int ## /max index/ (not just length) for target
-                            ## code line
-    text*: string
-    parts*: seq[DocCodePart]
-    overlaps*: seq[DocCodePart] ## \
-    ##
-    ## - WHY :: sometimes it is not possible to reliably determine extent
-    ##   of the identifier, which leads to potentially overlapping code
-    ##   segments. Determining 'the correct' one is hardly possible, so
-    ##   they are just dumped in the overlapping section.
+    ## Single line in the indexed file. Wraps the information about
+    ## occurence slices, line's text.
+    lineHigh*: int ## /max index/ (not just length) for target code line
+    text*: string ## Full text of the documentation code line
+    parts*: seq[DocCodePart] ## Parts of the code line that cover it
+    ## entirely, splitting between chunks that have occurence information
+    ## an ones that don't
+    overlaps*: seq[DocCodePart] ## sometimes it is not possible to
+    ## reliably determine extent of the identifier, which leads to
+    ## potentially overlapping code segments. Determining 'the correct' one
+    ## is hardly possible, so they are just dumped in the overlapping
+    ## section.
 
   DocCode* = object
     ## Block of source code with embedded occurence links.
@@ -368,6 +374,7 @@ type
     expansions*: ExpansionStore ## List of known expansion bettween
     ## open/close for module
     occurencies*: DocOccurStore
+    sigmap*: Table[PSym, DocId]
 
   DocContext* = ref object of PContext
     ## Documentation context object that is constructed for each open and
@@ -375,7 +382,6 @@ type
 
     db*: DocDb ## Documentation database that is persistent across all
     ## processing passes
-    sigmap*: TableRef[PSym, DocId]
     docModule*: DocEntry ## Toplevel entry - module currently being
     ## processed
     activeUser*: DocId ## Current active user for macro expansion
@@ -475,3 +481,9 @@ func isFromMacro*(db: DocDb, node: PNode): bool =
 proc getExpansion*(db: DocDb, node: PNode): ExpansionId =
   ## Get expansion tha tnode was generated from
   return db.expandedNodes[node.id]
+
+func `$`*(slice: DocCodeSlice): string =
+  &"{slice.line}:{slice.column.a}..{slice.column.b}"
+
+func `$`*(id: DocId): string =
+  &"<DocId-{id.int}>"

@@ -153,7 +153,7 @@ proc addSigmap*(ctx: DocContext, node: PNode, entry: DocEntry) =
   try:
     let sym = node.headSym()
     if not isNil(sym):
-      ctx.sigmap[sym] = entry.id
+      ctx.db.sigmap[sym] = entry.id
 
   except IndexDefect as e:
     discard
@@ -167,13 +167,14 @@ proc sigHash(t: PSym): SigHash =
 
 
 proc contains*(ctx: DocContext, ntype: PType | PNode | PSym): bool =
-  ntype.headSym() in ctx.sigmap
+  ntype.headSym() in ctx.db.sigmap
 
-proc `[]`*(ctx: DocContext, ntype: PType | PNode | PSym): DocId =
+proc `[]`*(db: DocDb, ntype: PType | PNode | PSym): DocId =
   let sym = headSym(ntype)
-  if sym in ctx.sigmap:
-    return ctx.sigmap[sym]
+  if sym in db.sigmap:
+    return db.sigmap[sym]
 
+proc `[]`*(ctx: DocContext, n: PType | PNode | PSym): DocId = ctx.db[n]
 
 proc contains(s1, s2: DocCodeSlice): bool =
   s1.line == s2.line and
