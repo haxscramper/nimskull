@@ -173,7 +173,7 @@ proc contains*(ctx: DocContext, ntype: PType | PNode | PSym): bool =
 
 proc `[]`*(db: DocDb, ntype: PType | PNode | PSym): DocEntryId =
   let sym = headSym(ntype)
-  if sym in db.sigmap:
+  if not sym.isNil() and sym in db.sigmap:
     return db.sigmap[sym]
 
 proc `[]`*(ctx: DocContext, n: PType | PNode | PSym): DocEntryId = ctx.db[n]

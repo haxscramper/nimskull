@@ -638,8 +638,6 @@ proc writeCode(
 
   aux(node)
 
-  debug node
-
   var
     store = newStrStore()
     opts = initLytOptions()

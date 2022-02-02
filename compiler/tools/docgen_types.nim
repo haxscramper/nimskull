@@ -348,7 +348,9 @@ type
         identDefault*: Option[DocCode] ## Expression for argument default
                                        ## value.
       of ndkAliasKinds:
-        baseType*: Option[DocEntryID]
+        baseType*: PNode ## Base type /expression/ of the alias. Might contain
+        ## generic type with multiple parameters, so `PNode` is used here
+        ## instead of `DocEntryId`
 
       of ndkProcKinds:
         procKind*: DocProcKind
@@ -401,13 +403,14 @@ type
   DocPreContext* = ref object of TContext
     ## Initial documntation analysis context that constructs a list of potential
     ## documentable entries using pre-sem visitation.
+    db*: DocDb
 
   DocContext* = ref object of PContext
     ## Documentation context object that is constructed for each open and close
     ## operation. This documentation further elaborates on analysis of the daa
 
     db*: DocDb ## Documentation database that is persistent across all
-    ## processing passes
+    ## processing passes, for both pre-sem and in-sem visitation.
     docModule*: DocEntryId ## Toplevel entry - module currently being
     ## processed
     activeUser*: DocEntryId ## Current active user for macro expansion

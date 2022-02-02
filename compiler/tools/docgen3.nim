@@ -247,14 +247,15 @@ proc updateCommon(entry: var DocEntry, decl: DefTree) =
 
 
 proc registerTopLevel(ctx: DocContext, node: PNode) =
-  if ctx.db.isFromMacro(node):
+  var db = ctx.db
+  if db.isFromMacro(node):
     return
 
   case node.kind:
     of nkProcDeclKinds:
       let def = unparseDefs(node)[0]
       var doc = ctx.registerProcDef(def)
-      ctx.db[doc].updateCommon(def)
+      db[doc].updateCommon(def)
       ctx.addSigmap(node, doc)
 
     of nkTypeSection:
@@ -264,7 +265,7 @@ proc registerTopLevel(ctx: DocContext, node: PNode) =
     of nkTypeDef:
       let def = unparseDefs(node)[0]
       var doc = ctx.registerTypeDef(def)
-      ctx.db[doc].updateCommon(def)
+      db[doc].updateCommon(def)
       ctx.addSigmap(node, doc)
 
 
@@ -358,7 +359,9 @@ type
     db: DocDb
 
 proc setupDocPasses(graph: ModuleGraph): DocDb =
-  ## Setup necessary context (semantic and docgen passes) for module graph
+  ## Setup necessary documentation pass context for module graph.
+  # Persistent data storage for all documentable entries. The data persists
+  # across all open/close triggers.
   var back = DocBackend(db: DocDb())
 
   graph.backend = back
@@ -368,10 +371,35 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
       proc(
         graph: ModuleGraph, module: PSym, idgen: IdGenerator
       ): PPassContext {.nimcall.} =
+        debug module
         var back = DocBackend(graph.backend)
-        var c = DocContext(newContext(graph, module, DocContext(
+        var c = DocPreContext(db: back.db)
+
+        return c
+    ),
+    TPassProcess(
+      proc(c: PPassContext, n: PNode): PNode {.nimcall.} =
+        discard "TODO"
+    ),
+    TPassClose(
+      proc(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
+        # Pre-sem documenter does not have any special 'close' actions for now
+        discard
+    ),
+    isFrontend = true))
+
+  # Documentation pass /extends/ the semantic pass, so we are adding it directly
+  # after 'pre-sem'
+  registerPass(graph, makePass(
+    TPassOpen(
+      proc(
+        graph: ModuleGraph, module: PSym, idgen: IdGenerator
+      ): PPassContext {.nimcall.} =
+        var back = DocBackend(graph.backend)
+
+        var ctx = DocContext(
           db: back.db,
-          docModule: newDocEntry(back.db, ndkModule, module.name.s),
+          docModule: back.db[module],
           resolveHook:  SemResolveHook(resolve),
           expandHooks: (
             preMacro:         SemExpandHook(preExpand),
@@ -379,13 +407,17 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
             postMacro:        SemExpandHook(postExpand),
             preTemplate:      SemExpandHook(preExpand),
             preTemplateResem: SemExpandHook(preResem),
-            postTemplate:     SemExpandHook(postExpand)))))
+            postTemplate:     SemExpandHook(postExpand)))
 
-        c.activeUser = c.docModule
-        c.db[c.docModule].visibility = dvkPublic
-        back.db.sigmap[module] = c.docModule
+        if ctx.docModule.isNil():
+          ctx.docModule = newDocEntry(back.db, ndkModule, module.name.s)
 
-        return semPassSetupOpen(c, graph, module, idgen)
+        ctx = DocContext(newContext(graph, module, ctx))
+        ctx.activeUser = ctx.docModule
+        ctx.db[ctx.docModule].visibility = dvkPublic
+        back.db.sigmap[module] = ctx.docModule
+
+        return semPassSetupOpen(ctx, graph, module, idgen)
     ),
     TPassProcess(
       proc(c: PPassContext, n: PNode): PNode {.nimcall.} =
@@ -408,24 +440,9 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
       proc(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
         result = semPassClose(graph, p, n)
         var ctx = DocContext(p)
+        # Add information about known macro expansions that were processed
+        # during compilation
         registerExpansions(ctx)
-
-        # for expand in ctx.db.expansions[ctx.firstExpansion .. ^1]:
-        #   if expand.expandDepth == 0:
-        #     ctx.occur(
-        #       tern(
-        #         expand.expandedFrom.kind in {nkIdent, nkSym},
-        #         expand.expandedFrom,
-        #         expand.expandedFrom[0],
-        #       ),
-        #       ctx[expand.expansionOf],
-        #       dokCall,
-        #       some expand.expansionUser)
-
-        #   else:
-        #     # Information about expansion-in-expansion for a macro
-        #     discard
-
 
     ),
     isFrontend = true))
