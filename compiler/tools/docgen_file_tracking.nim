@@ -149,13 +149,13 @@ proc headSym*(node: PNode): PSym =
       assert false, "TODO " & $node.kind
 
 
-proc addSigmap*(ctx: DocContext, node: PNode, entry: DocEntryId) =
+proc addSigmap*(db: var DocDb, node: PNode, entry: DocEntryId) =
   ## Add mapping between specific symbol and documentable entry. Symbol
   ## node is retrived from the ast.
   try:
     let sym = node.headSym()
     if not isNil(sym):
-      ctx.db.sigmap[sym] = entry
+      db.sigmap[sym] = entry
 
   except IndexDefect as e:
     discard

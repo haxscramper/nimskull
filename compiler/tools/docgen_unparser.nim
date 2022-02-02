@@ -90,6 +90,15 @@ func name*(def: DefTree): DefName = def.defName
 func sym*(def: DefName): PSym = def.ident.sym
 func sym*(def: DefTree): PSym = def.name.sym
 
+func hasSym*(def: DefTree): bool =
+  ## Check if unparsed definition tree has symbol in it's name (`nkSym`)
+  def.name.ident.kind == nkSym
+
+func hasSym*(def: DefName): bool =
+  ## Check if unparsed name has a symbol node as head
+  def.ident.kind == nkSym
+
+
 func getSName*(p: PNode): string =
   ## Get string value from `PNode`
   case p.kind:
@@ -154,7 +163,10 @@ proc unparseName*(node: PNode): DefName =
           result.ident = node[0][1]
           result.exported = true
 
-        of nkIdent, nkSym:
+        of nkIdent, nkSym, nkAccQuoted:
+          # NOTE not entirely sure about `AccQuoted` here, but technically
+          # it /is/ name - no need to reassemble the identifier from pices
+          # here.
           result.ident = node[0]
 
         else:

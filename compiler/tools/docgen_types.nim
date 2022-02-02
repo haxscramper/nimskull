@@ -297,6 +297,14 @@ type
     resolved*: Option[DocEntryId]
 
 type
+  DocDeclarationContext* = object
+    ## Active context of the documentable entry declarations
+    whenConditions*: seq[PNode] ## List of nested 'when' statements that were
+    ## encountered during recursive visitation.
+
+  DocPotentialDependency* = object
+    context*: DocDeclarationContext
+
   DocEntry* = object
     ## Documentation entry for the
     sym*: PSym ## Symbol that documentable entry was generated from.
@@ -305,6 +313,7 @@ type
     ## and as a result might not have the symbols available.
     node*: PNode ## Node that documentable entry was generated from
 
+    context*: DocDeclarationContext
     location*: Option[TLineInfo]
     extent*: Option[DocExtent]
     declHeadExtent*: Option[DocExtent] ## Source code extent for
@@ -335,9 +344,9 @@ type
         imports*: DocEntrySet ## Modules imported by this module
         exports*: DocEntrySet ## Documentable entries (modules, procs, types)
         ## exported by the module.
-
-      of ndkFile:
         includes*: DocEntrySet ## Visited includes
+
+        maybeIncludes*, maybeImports*: seq[DocPotentialDependency]
 
       of ndkStructKinds:
         superTypes*: seq[DocEntryId]
@@ -405,6 +414,9 @@ type
     ## documentable entries using pre-sem visitation.
     db*: DocDb
 
+    docModule*: DocEntryId ## Toplevel entry - module currently being
+    ## processed
+
   DocContext* = ref object of PContext
     ## Documentation context object that is constructed for each open and close
     ## operation. This documentation further elaborates on analysis of the daa
@@ -413,8 +425,8 @@ type
     ## processing passes, for both pre-sem and in-sem visitation.
     docModule*: DocEntryId ## Toplevel entry - module currently being
     ## processed
-    activeUser*: DocEntryId ## Current active user for macro expansion
-    ## occurencies
+
+    # Fields to track expansion context
     activeExpansion*: ExpansionId ## Id of the current active expansion.
     ## Points to valid one only if the expansion stack is not empty,
     ## otherwise stores the information about the last expansion.
@@ -467,17 +479,19 @@ proc getSub*(db: DocDb, parent: DocEntryId, subName: string): DocEntryId =
       return sub
 
 proc newDocEntry*(
-      db: var DocDb, kind: DocEntryKind, name: string
+    db: var DocDb, kind: DocEntryKind, name: string,
+    context: DocDeclarationContext = DocDeclarationContext()
   ): DocEntryId =
   ## Create new toplevel entry (package, file, module) directly using DB.
-  result = db.add(DocEntry(name: name, kind: kind))
+  result = db.add(DocEntry(name: name, kind: kind, context: context))
 
 proc newDocEntry*(
     db: var DocDb,
-    parent: DocEntryId, kind: DocEntryKind, name: string
+    parent: DocEntryId, kind: DocEntryKind, name: string,
+    context: DocDeclarationContext = DocDeclarationContext()
   ): DocEntryId =
   ## Create new nested document entry. Add it to subnode of `parent` node.
-  result = db.add DocEntry(name: name, kind: kind)
+  result = db.add DocEntry(name: name, kind: kind, context: context)
   db[parent].nested.add result
 
 proc getOrNew*(db: var DocDb, kind: DocEntryKind, name: string): DocEntryId =
@@ -492,6 +506,7 @@ proc getOrNew*(db: var DocDb, kind: DocEntryKind, name: string): DocEntryId =
 
 func isFromMacro*(db: DocDb, node: PNode): bool =
   ## Check if the node node was created during macro expansion
+  assert not node.isNil()
   node.id in db.expandedNodes
 
 proc getExpansion*(db: DocDb, node: PNode): ExpansionId =

@@ -41,7 +41,20 @@ static:
 
 
 
+type
+  DocVisitor = object
+    docUser: DocEntryId ## Active toplevel user
+    declContext: DocDeclarationContext ## Active documentation declaration
+    ## context that will be passed to new documentable entry on construction.
 
+proc newDocEntry(
+    db: var DocDb,
+    visitor: DocVisitor,
+    kind: DocEntryKind,
+    name: string
+  ): DocEntryId =
+
+  db.newDocEntry(visitor.docUser, kind, name, visitor.declContext)
 
 
 proc getEntryName(node: PNode): DefName =
@@ -52,7 +65,7 @@ proc getEntryName(node: PNode): DefName =
     else:
       result = unparseName(node)
 
-proc classifyDeclKind(ctx: DocContext, def: DefTree): DocEntryKind =
+proc classifyDeclKind(db: DocDb, def: DefTree): DocEntryKind =
   case def.kind:
     of deftProc:
       case def.node.kind:
@@ -78,7 +91,7 @@ proc classifyDeclKind(ctx: DocContext, def: DefTree): DocEntryKind =
               ndkObject
 
             else:
-              ctx.db[ctx[def.objBase]].kind
+              db[db[def.objBase]].kind
 
     of deftAlias:
       if def.node.kind in {nkInfix}:
@@ -100,12 +113,13 @@ proc getDeprecated(name: DefName): Option[string] =
     else:
       return some depr[1].getSName()
 
-proc registerProcDef(ctx: DocContext, def: DefTree): DocEntryId =
-  ctx.activeUser = ctx[def.name.sym]
-  result = ctx.db.newDocEntry(
-    ctx.docModule,
-    ctx.classifyDeclKind(def),
-    def.sym.getSName())
+proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntryId =
+  result = db.newDocEntry(
+    visitor.docUser,
+    db.classifyDeclKind(def),
+    def.sym.getSName(),
+    visitor.declContext
+  )
 
   let name = def.getSName()
   var pkind: DocProcKind
@@ -128,15 +142,14 @@ proc registerProcDef(ctx: DocContext, def: DefTree): DocEntryId =
       else:
         pkind = dpkOperator
 
-  ctx.db[result].procKind = pkind
+  db[result].procKind = pkind
 
-proc registerTypeDef(ctx: DocContext, decl: DefTree): DocEntryId =
-  ctx.activeUser = ctx[decl.name.sym]
+proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntryId =
   case decl.kind:
     of deftObject:
-      result = ctx.db.newDocEntry(
-        ctx.docModule,
-        ctx.classifyDeclKind(decl),
+      result = db.newDocEntry(
+        visitor,
+        db.classifyDeclKind(decl),
         decl.getSName())
 
       when false:
@@ -163,7 +176,7 @@ proc registerTypeDef(ctx: DocContext, decl: DefTree): DocEntryId =
           ctx.addSigmap(nimField.declNode.get(), field)
 
     of deftEnum:
-      result = ctx.db.newDocEntry(ctx.docModule, ndkEnum, decl.getSName())
+      result = db.newDocEntry(visitor, ndkEnum, decl.getSName())
 
       when false:
         ctx.setLocation(entry, node)
@@ -180,20 +193,21 @@ proc registerTypeDef(ctx: DocContext, decl: DefTree): DocEntryId =
 
 
     of deftAlias:
-      result = ctx.db.newDocEntry(
-        ctx.docModule,
-        classifyDeclKind(ctx, decl),
-        decl.getSName())
+      result = db.newDocEntry(
+        visitor,
+        db.classifyDeclKind(decl),
+        decl.getSName()
+      )
 
-      ctx.db[result].baseType = decl.baseType
+      db[result].baseType = decl.baseType
 
       when false:
         for param in parseNType(node[0]).genParams:
           var p = entry.newDocEntry(dekParam, param.head)
 
     of deftMagic:
-      result = ctx.db.newDocEntry(
-        ctx.docModule, ndkBuiltin, decl.getSName())
+      result = db.newDocEntry(
+        visitor, ndkBuiltin, decl.getSName())
 
     else:
       assert false, $decl.kind
@@ -203,10 +217,12 @@ proc registerTypeDef(ctx: DocContext, decl: DefTree): DocEntryId =
 
 
 proc registerDeclSection(
-    ctx: DocContext,
+    db: var DocDb,
+    visitor: DocVisitor,
     node: PNode,
     nodeKind: DocEntryKind = ndkGlobalVar
   ) =
+  ## Register let, var or const declaration section
 
   case node.kind:
     of nkConstSection, nkVarSection, nkLetSection:
@@ -217,64 +233,68 @@ proc registerDeclSection(
           else: ndkGlobalLet
 
       for subnode in node:
-        ctx.registerDeclSection(subnode, nodeKind)
+        db.registerDeclSection(visitor, subnode, nodeKind)
 
     of nkConstDef, nkIdentDefs:
       let defs = unparseDefs(node)
       for def in defs:
-        ctx.activeUser = ctx[def.sym]
         let pragma = def.pragmas.filterPragmas(
           @["intdefine", "strdefine", "booldefine"])
 
         let nodeKind = tern(0 < len(pragma), ndkCompileDefine, nodeKind)
 
-        var doc = ctx.db.newDocEntry(
-          ctx.docModule, nodeKind, def.getSName())
+        var doc = db.newDocEntry(
+          visitor, nodeKind, def.getSName())
 
         if def.exported:
-          ctx.db[doc].visibility = dvkPublic
+          db[doc].visibility = dvkPublic
 
-        ctx.addSigmap(node[0], doc)
+        db.addSigmap(node[0], doc)
 
     else:
       failNode node
 
 proc updateCommon(entry: var DocEntry, decl: DefTree) =
   entry.deprecatedMsg = getDeprecated(decl.name)
-  entry.sym = decl.sym
+  if decl.hasSym():
+    entry.sym = decl.sym
+
   if decl.exported:
     entry.visibility = dvkPublic
 
 
-proc registerTopLevel(ctx: DocContext, node: PNode) =
-  var db = ctx.db
+proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
   if db.isFromMacro(node):
     return
 
   case node.kind:
     of nkProcDeclKinds:
       let def = unparseDefs(node)[0]
-      var doc = ctx.registerProcDef(def)
+      var doc = db.registerProcDef(visitor, def)
       db[doc].updateCommon(def)
-      ctx.addSigmap(node, doc)
+      db.addSigmap(node, doc)
 
     of nkTypeSection:
       for typeDecl in node:
-        registerTopLevel(ctx, typeDecl)
+        registerTopLevel(db, visitor, typeDecl)
 
     of nkTypeDef:
       let def = unparseDefs(node)[0]
-      var doc = ctx.registerTypeDef(def)
+      var doc = db.registerTypeDef(visitor, def)
       db[doc].updateCommon(def)
-      ctx.addSigmap(node, doc)
-
+      db.addSigmap(node, doc)
 
     of nkStmtList:
       for subnode in node:
-        ctx.registerTopLevel(subnode)
+        db.registerTopLevel(visitor, subnode)
 
     of nkVarSection, nkLetSection, nkConstSection:
-      ctx.registerDeclSection(node)
+      db.registerDeclSection(visitor, node)
+
+    of nkWhenStmt:
+      var visitor = visitor
+      visitor.declContext.whenConditions.add node[0]
+      registerTopLevel(db, visitor, node)
 
     else:
       discard
@@ -297,7 +317,6 @@ proc preExpand(context: PContext, expr: PNode, sym: PSym) =
     expansionOf: sym,
     expandDepth: ctx.expansionStack.len,
     expandedFrom: expr.copyTree(),
-    expansionUser: ctx.activeUser
   )
 
   ctx.activeExpansion = active
@@ -371,15 +390,21 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
       proc(
         graph: ModuleGraph, module: PSym, idgen: IdGenerator
       ): PPassContext {.nimcall.} =
-        debug module
-        var back = DocBackend(graph.backend)
-        var c = DocPreContext(db: back.db)
-
-        return c
+        var db = DocBackend(graph.backend).db
+        return DocPreContext(
+          db: db,
+          docModule: db.newDocEntry(ndkModule, module.name.s)
+        )
     ),
     TPassProcess(
       proc(c: PPassContext, n: PNode): PNode {.nimcall.} =
-        discard "TODO"
+        var ctx = DocPreContext(c)
+        assert not ctx.db.isNil()
+        var visitor = DocVisitor()
+        visitor.docUser = ctx.docModule
+
+        registerTopLevel(ctx.db, visitor, n)
+
     ),
     TPassClose(
       proc(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
@@ -413,7 +438,6 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
           ctx.docModule = newDocEntry(back.db, ndkModule, module.name.s)
 
         ctx = DocContext(newContext(graph, module, ctx))
-        ctx.activeUser = ctx.docModule
         ctx.db[ctx.docModule].visibility = dvkPublic
         back.db.sigmap[module] = ctx.docModule
 
@@ -423,17 +447,19 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
       proc(c: PPassContext, n: PNode): PNode {.nimcall.} =
         result = semPassProcess(c, n)
         var ctx = DocContext(c)
-        let user = ctx.activeUser
+        var visitor = DocVisitor()
 
+        visitor.docUser = ctx.docModule
+
+        assert not ctx.db.isNil()
         # Register toplevel declaration entries generated in the code,
         # excluding ones that were generated as a result of macro
         # expansions.
-        registerTopLevel(ctx, result)
+        registerTopLevel(ctx.db, visitor, result)
 
         # Register immediate uses of the macro expansions
         var state = initRegisterState()
         state.moduleId = ctx.docModule
-        ctx.activeUser = user
         ctx.registerUses(result, state)
     ),
     TPassClose(
@@ -453,3 +479,4 @@ proc commandDoc3*(graph: ModuleGraph, ext: string) =
   ## Execute documentation generation command for module graph
   let db = setupDocPasses(graph)
   compileProject(graph)
+  echo "Compiled documentation generator project"
