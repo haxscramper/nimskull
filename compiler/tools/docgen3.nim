@@ -100,10 +100,12 @@ proc getDeprecated(name: DefName): Option[string] =
     else:
       return some depr[1].getSName()
 
-proc registerProcDef(ctx: DocContext, def: DefTree): DocEntry =
+proc registerProcDef(ctx: DocContext, def: DefTree): DocEntryId =
   ctx.activeUser = ctx[def.name.sym]
-  result = ctx.docModule.newDocEntry(
-    ctx.classifyDeclKind(def), def.sym.getSName())
+  result = ctx.db.newDocEntry(
+    ctx.docModule,
+    ctx.classifyDeclKind(def),
+    def.sym.getSName())
 
   let name = def.getSName()
   var pkind: DocProcKind
@@ -126,14 +128,16 @@ proc registerProcDef(ctx: DocContext, def: DefTree): DocEntry =
       else:
         pkind = dpkOperator
 
-  result.procKind = pkind
+  ctx.db[result].procKind = pkind
 
-proc registerTypeDef(ctx: DocContext, decl: DefTree): DocEntry =
+proc registerTypeDef(ctx: DocContext, decl: DefTree): DocEntryId =
   ctx.activeUser = ctx[decl.name.sym]
   case decl.kind:
     of deftObject:
-      result = ctx.docModule.newDocEntry(
-        ctx.classifyDeclKind(decl), decl.getSName())
+      result = ctx.db.newDocEntry(
+        ctx.docModule,
+        ctx.classifyDeclKind(decl),
+        decl.getSName())
 
       when false:
         if objectDecl.base.isSome():
@@ -159,7 +163,7 @@ proc registerTypeDef(ctx: DocContext, decl: DefTree): DocEntry =
           ctx.addSigmap(nimField.declNode.get(), field)
 
     of deftEnum:
-      result = ctx.docModule.newDocEntry(ndkEnum, decl.getSName())
+      result = ctx.db.newDocEntry(ctx.docModule, ndkEnum, decl.getSName())
 
       when false:
         ctx.setLocation(entry, node)
@@ -176,18 +180,20 @@ proc registerTypeDef(ctx: DocContext, decl: DefTree): DocEntry =
 
 
     of deftAlias:
-      result = ctx.docModule.newDocEntry(
+      result = ctx.db.newDocEntry(
+        ctx.docModule,
         classifyDeclKind(ctx, decl),
         decl.getSName())
 
-      result.baseType = decl.baseType
+      ctx.db[result].baseType = decl.baseType
 
       when false:
         for param in parseNType(node[0]).genParams:
           var p = entry.newDocEntry(dekParam, param.head)
 
     of deftMagic:
-      result = ctx.docModule.newDocEntry(ndkBuiltin, decl.getSName())
+      result = ctx.db.newDocEntry(
+        ctx.docModule, ndkBuiltin, decl.getSName())
 
     else:
       assert false, $decl.kind
@@ -222,9 +228,11 @@ proc registerDeclSection(
 
         let nodeKind = tern(0 < len(pragma), ndkCompileDefine, nodeKind)
 
-        var doc = ctx.docModule.newDocEntry(nodeKind, def.getSName())
+        var doc = ctx.db.newDocEntry(
+          ctx.docModule, nodeKind, def.getSName())
+
         if def.exported:
-          doc.visibility = dvkPublic
+          ctx.db[doc].visibility = dvkPublic
 
         ctx.addSigmap(node[0], doc)
 
@@ -246,7 +254,7 @@ proc registerTopLevel(ctx: DocContext, node: PNode) =
     of nkProcDeclKinds:
       let def = unparseDefs(node)[0]
       var doc = ctx.registerProcDef(def)
-      doc.updateCommon(def)
+      ctx.db[doc].updateCommon(def)
       ctx.addSigmap(node, doc)
 
     of nkTypeSection:
@@ -256,7 +264,7 @@ proc registerTopLevel(ctx: DocContext, node: PNode) =
     of nkTypeDef:
       let def = unparseDefs(node)[0]
       var doc = ctx.registerTypeDef(def)
-      doc.updateCommon(def)
+      ctx.db[doc].updateCommon(def)
       ctx.addSigmap(node, doc)
 
 
@@ -373,9 +381,9 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
             preTemplateResem: SemExpandHook(preResem),
             postTemplate:     SemExpandHook(postExpand)))))
 
-        c.activeUser = c.docModule.id
-        c.docModule.visibility = dvkPublic
-        back.db.sigmap[module] = c.docModule.id
+        c.activeUser = c.docModule
+        c.db[c.docModule].visibility = dvkPublic
+        back.db.sigmap[module] = c.docModule
 
         return semPassSetupOpen(c, graph, module, idgen)
     ),
@@ -392,7 +400,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
 
         # Register immediate uses of the macro expansions
         var state = initRegisterState()
-        state.moduleId = ctx.docModule.id
+        state.moduleId = ctx.docModule
         ctx.activeUser = user
         ctx.registerUses(result, state)
     ),

@@ -149,11 +149,13 @@ proc headSym*(node: PNode): PSym =
       assert false, "TODO " & $node.kind
 
 
-proc addSigmap*(ctx: DocContext, node: PNode, entry: DocEntry) =
+proc addSigmap*(ctx: DocContext, node: PNode, entry: DocEntryId) =
+  ## Add mapping between specific symbol and documentable entry. Symbol
+  ## node is retrived from the ast.
   try:
     let sym = node.headSym()
     if not isNil(sym):
-      ctx.db.sigmap[sym] = entry.id
+      ctx.db.sigmap[sym] = entry
 
   except IndexDefect as e:
     discard
@@ -169,12 +171,12 @@ proc sigHash(t: PSym): SigHash =
 proc contains*(ctx: DocContext, ntype: PType | PNode | PSym): bool =
   ntype.headSym() in ctx.db.sigmap
 
-proc `[]`*(db: DocDb, ntype: PType | PNode | PSym): DocId =
+proc `[]`*(db: DocDb, ntype: PType | PNode | PSym): DocEntryId =
   let sym = headSym(ntype)
   if sym in db.sigmap:
     return db.sigmap[sym]
 
-proc `[]`*(ctx: DocContext, n: PType | PNode | PSym): DocId = ctx.db[n]
+proc `[]`*(ctx: DocContext, n: PType | PNode | PSym): DocEntryId = ctx.db[n]
 
 proc contains(s1, s2: DocCodeSlice): bool =
   s1.line == s2.line and
@@ -241,9 +243,11 @@ proc splitOn*(base, sep: DocCodeSlice):
 
 
 proc newCodePart*(slice: DocCodeSlice): DocCodePart =
+  ## Construct new code part without any documentable occurence information
   DocCodePart(slice: slice)
 
-proc newCodePart*(slice: DocCodeSlice, occur: DocOccur): DocCodePart =
+proc newCodePart*(slice: DocCodeSlice, occur: DocOccurId): DocCodePart =
+  ## Create new annotated code part with given documentable occurence id
   DocCodePart(slice: slice, occur: some occur)
 
 proc newCodeLine*(idx: int, line: string): DocCodeLine =
@@ -369,7 +373,7 @@ proc newOccur(
     ctx: DocContext,
     position: DocCodeSlice,
     file: FileIndex,
-    occur: DocOccur
+    occur: DocOccurId
   ) =
 
   if file notin ctx.db.files:
@@ -378,27 +382,27 @@ proc newOccur(
   ctx.db.files[file].body.add newCodePart(position, occur)
 
 proc occur*(
-    ctx: DocContext,
+    db: var DocDb,
     node: PNode,
     kind: DocOccurKind,
-    user: Option[DocId]
-  ) =
+    user: Option[DocEntryId]
+  ): DocOccurId =
 
   var occur = DocOccur(user: user, kind: kind)
   if kind in dokLocalKinds:
     assert false, "Unexpected kind for occur " & $kind
 
   else:
-    occur.refid = ctx[node]
+    occur.refid = db[node]
 
-  discard ctx.db.occurencies.add occur
+  return db.occurencies.add occur
 
 proc occur*(
     ctx: DocContext,
     node: PNode,
-    id: DocId,
+    id: DocEntryId,
     kind: DocOccurKind,
-    user: Option[DocId]
+    user: Option[DocEntryId]
   ) =
 
   var occur = DocOccur(kind: kind, user: user, node: node)
@@ -406,36 +410,50 @@ proc occur*(
   discard ctx.db.occurencies.add occur
 
 proc occur*(
-    ctx: DocContext,
+    db: var DocDb,
     node: PNode,
     parent: PNode,
-    id: DocId,
+    id: DocEntryId,
     kind: DocOccurKind,
-    user: Option[DocId]
-  ) =
+    user: Option[DocEntryId]
+  ): DocOccurId =
+  ## Construct new docmentable entry occurence and return new ID
   var occur = DocOccur(kind: kind, user: user)
   occur.refid = id
-  discard ctx.db.occurencies.add occur
+  return db.add occur
+
 
 proc occur*(
-    ctx: DocContext,
+    db: var DocDb,
+    node: PNode,
+    id: DocEntryId,
+    kind: DocOccurKind,
+    user: Option[DocEntryId]
+  ): DocOccurId =
+  ## Construct new docmentable entry occurence and return new ID
+  var occur = DocOccur(kind: kind, user: user)
+  occur.refid = id
+  return db.add occur
+
+proc occur*(
+    db: var DocDb,
     node: PNode,
     kind: DocOccurKind,
     localid: string,
     withInit: bool = false
-  ) =
-
+  ): DocOccurId =
+  ## Construct new occurence of the local documentable entry and return the
+  ## resulting ID
   var occur = DocOccur(kind: kind)
   occur.localId = localid
   occur.withInit = withInit
-
 
   if kind in dokLocalDeclKinds:
     if not isNil(node.typ):
       let et = node.typ.skipTypes(skipPtrs)
       if not isNil(et.sym):
-        let id = ctx[et.sym]
-        if id.isValid():
+        let id = db[et.sym]
+        if not id.isNil():
           occur.user = some id
 
-  ctx.newOccur(node.nodeSlice(), node.info.fileIndex, occur)
+  return db.add occur

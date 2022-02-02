@@ -53,9 +53,9 @@ type
 
   RegisterState = object
     state: seq[RegisterStateKind]
-    switchId: DocId
-    moduleId*: DocId
-    user: Option[DocId]
+    switchId: DocEntryId
+    moduleId*: DocEntryId
+    user: Option[DocEntryId]
     hasInit: bool
     allowMacroNodes: bool ## Allow to record information about usages in
     ## code generated form macro expansions.
@@ -64,15 +64,15 @@ proc `+`(state: RegisterState, kind: RegisterStateKind): RegisterState =
   result = state
   result.state.add kind
 
-proc `+`(state: RegisterState, user: DocId): RegisterState =
+proc `+`(state: RegisterState, user: DocEntryId): RegisterState =
   result = state
-  if not user.isValid():
+  if not user.isNil():
     result.user = some user
 
-proc `+`(state: RegisterState, user: Option[DocId]): RegisterState =
+proc `+`(state: RegisterState, user: Option[DocEntryId]): RegisterState =
   result = state
   if result.user.isNone() or (result.user.isSome() and user.isSome()):
-    if user.isSome() and not user.get().isValid():
+    if user.isSome() and user.get().isNil():
       discard
 
     else:
@@ -150,11 +150,11 @@ proc exprTypeSym(n: PNode): PSym =
 proc registerProcBody(
     ctx: DocContext, body: PNode, state: RegisterState, node: PNode) =
   let s = node[0].headSym()
-  if isNil(s) or not isValid(ctx[s]):
+  if isNil(s) or isNil(ctx[s]):
     return
 
+  var main = ctx.db[ctx[s]]
   let
-    main = ctx.db[ctx[s]]
     decl = s.ast
     prag = decl[pragmasPos]
     mainRaise = s.typ.n.getEffects(exceptionEffects)
@@ -169,7 +169,7 @@ proc registerProcBody(
         if not isNil(callSym) and callSym.kind in skProcDeclKinds:
           # For `openarray[T]` `headSym` returns type symbol, but we are only
           # concerned with calls to other procedures here.
-          main.raisesVia[ctx[callSym]] = DocIdSet()
+          main.raisesVia[ctx[callSym]] = DocEntrySet()
 
   if not mainEffect.isNil:
     for e in mainEffect:
@@ -177,7 +177,7 @@ proc registerProcBody(
 
       let callSym = headSym(e)
       if not isNil(callSym) and callSym.kind in skProcDeclKinds:
-        main.effectsVia[ctx[callSym]] = DocIdSet()
+        main.effectsVia[ctx[callSym]] = DocEntrySet()
 
   let icpp = effectSpec(prag, {wImportc, wImportCpp, wImportJs, wImportObjC})
   if not icpp.isNil():
@@ -200,15 +200,15 @@ proc registerProcBody(
           if not raises.isEmptyTree():
             for r in raises:
               let id = ctx[r]
-              if isValid(id) and id in main.raisesVia:
+              if not isNil(id) and id in main.raisesVia:
                 main.raisesVia[id].incl ctx[head]
 
           let effects = head.effectSpec(wTags)
           if not effects.isNil():
             for e in effects:
               let id = ctx[e]
-              if isValid(id):
-                main.effectsVia.mgetOrPut(id, DocIdSet()).incl id
+              if not isNil(id):
+                main.effectsVia.mgetOrPut(id, DocEntrySet()).incl id
 
         for sub in node:
           aux(sub)
@@ -234,147 +234,163 @@ proc registerProcBody(
   aux(body)
 
 
+proc registerSymbolUse(
+    ctx: DocContext,
+    node: PNode,
+    state: RegisterState,
+    parent: PNode
+  ): Option[DocEntryId] =
+
+  assert node.kind == nkSym
+
+  var db = ctx.db
+  case node.sym.kind:
+    of skType:
+      if state.top() == rskExport:
+        db[state.moduleId].exports.incl ctx[node]
+
+      else:
+        let useKind =
+          case state.top():
+            of rskTopLevel, rskPragma, rskAsgn:  dokTypeDirectUse
+            of rskObjectFields, rskObjectBranch: dokTypeAsFieldUse
+            of rskProcArgs, rskProcHeader:       dokTypeAsArgUse
+
+            of rskInheritList: dokInheritFrom
+            of rskProcReturn:  dokTypeAsReturnUse
+            of rskBracketHead: dokTypeSpecializationUse
+            of rskBracketArgs: dokTypeAsParameterUse
+            of rskTypeHeader:  dokObjectDeclare
+            of rskEnumHeader:  dokEnumDeclare
+            of rskAliasHeader: dokAliasDeclare
+            of rskCallHead:    dokTypeConversionUse
+            of rskImport:      dokImported
+            of rskExport:      dokExported
+            of rskInclude:     dokIncluded
+            of rskDefineCheck: dokDefineCheck
+            of rskEnumFields:  dokNone
+
+        discard db.occur(node, useKind, state.user)
+        if useKind in {dokEnumDeclare, dokObjectDeclare, dokAliasDeclare}:
+          result = some ctx[node]
+
+    of skEnumField:
+      if state.top() == rskEnumFields:
+        discard db.occur(node, dokEnumFieldDeclare, state.user)
+
+      else:
+        discard db.occur(node, dokEnumFieldUse, state.user)
+
+    of skField:
+      if not node.sym.owner.isNil:
+        let id = ctx[node.sym.owner]
+        if not id.isNil():
+          discard db.occur(
+            node, parent, id, dokFieldUse, state.user)
+
+    of skProcDeclKinds:
+      if state.top() == rskProcHeader:
+        discard db.occur(node, dokCallDeclare, state.user)
+        result = some ctx[node]
+
+      elif state.top() == rskExport:
+        db[state.moduleId].exports.incl ctx[node]
+
+      else:
+        discard db.occur(node, dokCall, state.user)
+
+    of skParam, skVar, skConst, skLet, skForVar:
+      let sym = node.headSym()
+      if sym in ctx:
+        if state.top() == rskAsgn:
+          discard db.occur(node, dokGlobalWrite, state.user)
+
+        elif state.top() == rskTopLevel:
+          discard db.occur(node, dokGlobalDeclare, state.user)
+          result = some ctx[sym]
+
+        else:
+          discard db.occur(
+            node, dokGlobalRead, state.user)
+
+      else:
+        let (kind, ok) =
+          case state.top():
+            of rskAsgn:                    (dokLocalWrite, true)
+            of rskProcHeader, rskProcArgs: (dokLocalArgDecl, true)
+            of rskObjectFields, rskProcReturn:
+              # Local callback parameters or fields in return `tuple`
+              # values.
+              (dokLocalWrite, false)
+
+            else:
+              (dokLocalUse, true)
+
+        if ok:
+          discard db.occur(
+            node, kind, $node.headSym(), state.hasInit)
+
+    of skResult:
+      # IDEA can be used to collect information about `result` vs
+      # `return` uses
+      discard
+
+    of skLabel, skTemp, skUnknown, skConditional, skDynLib,
+       skGenericParam, skStub, skPackage, skAlias:
+      discard # ???
+
+    of skModule:
+      discard db.occur(node, dokImport, some(state.moduleId))
+      case state.top():
+        of rskImport:
+          db[state.moduleId].imports.incl ctx[node]
+
+        of rskExport:
+          db[state.moduleId].exports.incl ctx[node]
+
+        of rskCallHead:
+          # `module.proc`
+          discard
+
+        else:
+          assert false, $state.top()
+
+
+
 
 proc impl(
     ctx: DocContext,
     node: PNode,
     state: RegisterState,
     parent: PNode
-  ): Option[DocId] {.discardable.} =
+  ): Option[DocEntryId] {.discardable.} =
 
   if ctx.db.isFromMacro(node) and not state.allowMacroNodes:
     return
 
+  var db = ctx.db
+
   case node.kind:
     of nkSym:
-      case node.sym.kind:
-        of skType:
-          if state.top() == rskExport:
-            ctx.db[state.moduleId].exports.incl ctx[node]
-
-          else:
-            let useKind =
-              case state.top():
-                of rskTopLevel, rskPragma, rskAsgn:  dokTypeDirectUse
-                of rskObjectFields, rskObjectBranch: dokTypeAsFieldUse
-                of rskProcArgs, rskProcHeader:       dokTypeAsArgUse
-
-                of rskInheritList: dokInheritFrom
-                of rskProcReturn:  dokTypeAsReturnUse
-                of rskBracketHead: dokTypeSpecializationUse
-                of rskBracketArgs: dokTypeAsParameterUse
-                of rskTypeHeader:  dokObjectDeclare
-                of rskEnumHeader:  dokEnumDeclare
-                of rskAliasHeader: dokAliasDeclare
-                of rskCallHead:    dokTypeConversionUse
-                of rskImport:      dokImported
-                of rskExport:      dokExported
-                of rskInclude:     dokIncluded
-                of rskDefineCheck: dokDefineCheck
-                of rskEnumFields:  dokNone
-
-            ctx.occur(node, useKind, state.user)
-
-            if useKind in {dokEnumDeclare, dokObjectDeclare, dokAliasDeclare}:
-              result = some ctx[node]
-
-        of skEnumField:
-          if state.top() == rskEnumFields:
-            ctx.occur(node, dokEnumFieldDeclare, state.user)
-
-          else:
-            ctx.occur(node, dokEnumFieldUse, state.user)
-
-        of skField:
-          if not node.sym.owner.isNil:
-            let id = ctx[node.sym.owner]
-            if id.isValid():
-              ctx.occur(node, parent, id, dokFieldUse, state.user)
-
-        of skProcDeclKinds:
-          if state.top() == rskProcHeader:
-            ctx.occur(node, dokCallDeclare, state.user)
-            result = some ctx[node]
-
-          elif state.top() == rskExport:
-            ctx.db[state.moduleId].exports.incl ctx[node]
-
-          else:
-            ctx.occur(node, dokCall, state.user)
-
-        of skParam, skVar, skConst, skLet, skForVar:
-          let sym = node.headSym()
-          if sym in ctx:
-            if state.top() == rskAsgn:
-              ctx.occur(node, dokGlobalWrite, state.user)
-
-            elif state.top() == rskTopLevel:
-              ctx.occur(node, dokGlobalDeclare, state.user)
-              result = some ctx[sym]
-
-            else:
-              ctx.occur(node, dokGlobalRead, state.user)
-
-          else:
-            let (kind, ok) =
-              case state.top():
-                of rskAsgn:                    (dokLocalWrite, true)
-                of rskProcHeader, rskProcArgs: (dokLocalArgDecl, true)
-                of rskObjectFields, rskProcReturn:
-                  # Local callback parameters or fields in return `tuple`
-                  # values.
-                  (dokLocalWrite, false)
-
-                else:
-                  (dokLocalUse, true)
-
-            if ok:
-              ctx.occur(node, kind, $node.headSym(), state.hasInit)
-
-        of skResult:
-          # IDEA can be used to collect information about `result` vs
-          # `return` uses
-          discard
-
-        of skLabel, skTemp, skUnknown, skConditional, skDynLib,
-           skGenericParam, skStub, skPackage, skAlias:
-          discard # ???
-
-        of skModule:
-          ctx.occur(node, dokImport, some(state.moduleId))
-          let module = ctx.db[state.moduleId]
-          case state.top():
-            of rskImport:
-              module.imports.incl ctx[node]
-
-            of rskExport:
-              module.exports.incl ctx[node]
-
-            of rskCallHead:
-              # `module.proc`
-              discard
-
-            else:
-              assert false, $state.top()
-
+      result = registerSymbolUse(ctx, node, state, parent)
 
     of nkIdent:
-      if state.switchId.isValid():
-        let sub = ctx.db[state.switchId].getSub($node)
-        if sub.isValid():
-          ctx.occur(node, sub, dokEnumFieldUse, state.user)
+      if not state.switchId.isNil():
+        let sub = db.getSub(state.switchId, $node)
+        if not sub.isNil():
+          discard db.occur(node, sub, dokEnumFieldUse, state.user)
 
       elif state.top() == rskDefineCheck:
-        let def = ctx.db.getOrNew(ndkCompileDefine, $node)
-        ctx.occur(node, def.id, dokDefineCheck, state.user)
+        let def = db.getOrNew(ndkCompileDefine, $node)
+        discard db.occur(node, def, dokDefineCheck, state.user)
 
       elif state.top() == rskPragma:
-        let def = ctx.db.getOrNew(ndkPragma, $node)
-        ctx.occur(node, def.id, dokAnnotationUsage, state.user)
+        let def = db.getOrNew(ndkPragma, $node)
+        discard db.occur(node, def, dokAnnotationUsage, state.user)
 
       elif state.top() == rskObjectFields:
-        let def = ctx.db[state.user.get].getSub($node)
-        ctx.occur(node, def, dokFieldDeclare, state.user)
+        let def = db.getSub(state.user.get, $node)
+        discard db.occur(node, def, dokFieldDeclare, state.user)
 
     of nkCommentStmt,
        nkEmpty,
@@ -392,9 +408,9 @@ proc impl(
 
         let parent = ctx[node.typ.sym]
         if node.typ.sym.ast.isEnum():
-          if parent.isValid():
-            let sub = ctx.db[parent].getSub($node)
-            ctx.occur(node, sub, dokEnumFieldUse, state.user)
+          if not parent.isNil():
+            let sub = db.getSub(parent, $node)
+            discard db.occur(node, sub, dokEnumFieldUse, state.user)
 
 
     of nkPragmaExpr:
@@ -523,12 +539,13 @@ proc impl(
       if node[0].kind != nkEmpty and not isNil(node[0].typ):
         let headType = node[0].typ.skipTypes(skipPtrs)
         if not isNil(headType.sym):
-          let head = ctx.db[ctx[headType.sym]]
+          let head = db[headType.sym]
           for fieldPair in node[1 ..^ 1]:
             let field = fieldPair[0]
-            let fieldId = head.getSub(field.getSName())
-            if fieldId.isValid():
-              ctx.occur(field, fieldPair, fieldId, dokFieldSet, state.user)
+            let fieldId = db.getSub(head, field.getSName())
+            if not fieldId.isNil():
+              discard db.occur(
+                field, fieldPair, fieldId, dokFieldSet, state.user)
 
       ctx.impl(node[0], state, node)
       for subnode in node[1 ..^ 1]:
@@ -595,7 +612,7 @@ proc addLine(writer: var CodeWriter) =
   writer.column = 0
   writer.add(repeat(" ", writer.indent))
 
-proc add(writer: var CodeWriter, text: string, occur: DocOccur) =
+proc add(writer: var CodeWriter, text: string, occur: DocOccurId) =
   let line = writer.line
   let start = writer.column
   add(writer, text)
@@ -605,9 +622,9 @@ proc add(writer: var CodeWriter, text: string, occur: DocOccur) =
 
 
 proc writeCode(
-    db: DocDb, 
-    node: PNode, 
-    writer: var CodeWriter, 
+    db: var DocDb,
+    node: PNode,
+    writer: var CodeWriter,
     expand: ExpansionId
   ) =
   ## Write out expanded node into the final chunks of text, adding
@@ -661,8 +678,8 @@ proc writeCode(
           of nkSym:
             let id = db[node.sym]
             # TODO Occurence information can be added here,
-            if id.isValid():
-              writer.add(node.sym.name.s, DocOccur(
+            if not id.isNil():
+              writer.add(node.sym.name.s, db.add DocOccur(
                 inExpansionOf: some expand,
                 kind: dokInMacroExpansion,
                 refid: id
@@ -682,7 +699,7 @@ proc writeCode(
 
 
 proc writeCode(
-    db: DocDb,
+    db: var DocDb,
     expand: ExpansionId,
     writer: var CodeWriter
   ) =
@@ -713,7 +730,7 @@ proc writeCode(
 
 
 proc registerExpansions*(ctx: DocContext) =
-  let db = ctx.db
+  var db = ctx.db
   var writer = CodeWriter()
   for expand in ctx.toplevelExpansions:
     db.writeCode(expand, writer)

@@ -164,9 +164,9 @@ const
 
 declareIdType(Expansion, addHash = true)
 declareIdType(DocOccur, addHash = true)
+declareIdType(DocEntry, addHash = true)
 
 type
-  DocId* = distinct int
   Expansion* = object
     ## Information about macro or template expansion
     expansionOf*: PSym ## Expanded symbol
@@ -174,7 +174,7 @@ type
     expandedFrom*: PNode ## Original expression that node expanded from
     immediateResult*: PNode
     resultNode*: PNode ## Resulting expanded node
-    expansionUser*: DocId ## Parent documentable entry that contained macro
+    expansionUser*: DocEntryId ## Parent documentable entry that contained macro
     ## expansion (for toplevel entries it is a module)
     nested*: seq[ExpansionId] ## List of the nested expansions in
     resolveMap*: Table[int, PSym] ## Map form node ids generated in the
@@ -188,7 +188,7 @@ type
     ## storage is implemented
     ## (https://github.com/nim-works/nimskull/discussions/113) this will be
     ## replaced by extra data table associated with each token.
-    user*: Option[DocId] ## For occurence of global documentable
+    user*: Option[DocEntryId] ## For occurence of global documentable
     ## entry - lexically scoped parent (for function call - callee, for
     ## type - parent composition). For local occurence - type of the
     ## identifier (for local variables, arguments etc).
@@ -203,7 +203,7 @@ type
         ## was default-constructed or explicitly initialized.
 
       else:
-        refid*: DocId ## Documentable entry id
+        refid*: DocEntryId ## Documentable entry id
 
 declareStoreType(DocOccur)
 
@@ -217,7 +217,7 @@ type
   DocCodePart* = object
     ## Single code part with optional occurence link.
     slice*: DocCodeSlice ## Single-line slice of the code
-    occur*: Option[DocOccur] ## 'link' to documentable entry
+    occur*: Option[DocOccurId] ## 'link' to documentable entry
 
   DocCodeLine* = object
     ## Single line in the indexed file. Wraps the information about
@@ -261,21 +261,22 @@ type
     kind*: DocIdentKind ##
     identType*: PType ## Identifier type
     value*: Option[string] ## Optional expression for initialization value
-    entry*: DocId
+    entry*: DocEntryId
 
-  DocIdSet* = object
+  DocEntrySet* = object
     ids*: IntSet
 
   DocIdTableN* = object
-    table*: Table[DocId, DocIdSet]
+    table*: Table[DocEntryId, DocEntrySet]
 
   DocEntryGroup* = ref object
-    entries*: seq[DocEntry]
+    ## Arbitrary grouping of the documentable entries
+    entries*: seq[DocEntryId]
     nested*: seq[DocEntryGroup]
 
   DocPragma* = object
     name*: string
-    entry*: DocId
+    entry*: DocEntryId
     args*: seq[DocCode]
 
   DocExtent* = object
@@ -293,9 +294,10 @@ type
   DocRequires* = object
     name*: string
     version*: string # TODO expand
-    resolved*: Option[DocId]
+    resolved*: Option[DocEntryId]
 
-  DocEntry* = ref object
+type
+  DocEntry* = object
     sym*: PSym
     node*: PNode
 
@@ -305,16 +307,11 @@ type
     ## documentable entry 'head'. Points to single identifier - entry name
     ## in declaration.
     ## - WHY :: Used in sourcetrail
-    nested*: seq[DocId] ## Nested documentable entries. Not all
+    nested*: seq[DocEntryId] ## Nested documentable entries. Not all
     ## `DocEntryKind` is guaranteed to have one.
-
-    id*: DocId
-    db*: DocDb ## Parent documentable entry database
-
     name*: string
     visibility*: DocVisibilityKind
     deprecatedMsg*: Option[string]
-
     docText*: DocText
 
     case kind*: DocEntryKind
@@ -325,11 +322,14 @@ type
         requires*: seq[DocRequires]
 
       of ndkModule:
-        imports*: DocIdSet
-        exports*: DocIdSet
+        imports*: DocEntrySet
+        exports*: DocEntrySet
+
+      of ndkFile:
+        includes*: DocEntrySet
 
       of ndkStructKinds:
-        superTypes*: seq[DocId]
+        superTypes*: seq[DocEntryId]
 
       of ndkArg, ndkField:
         identTypeStr*: Option[string]
@@ -343,15 +343,16 @@ type
         procKind*: DocProcKind
         wrapOf*: Option[string]
         dynlibOf*: Option[string]
-        calls*: DocIdSet ## Procedures called by entry
-        raises*: DocIdSet ## Full list of potential raises of a procedure
-        effects*: DocIdSet ## All effects for procedure body
-        raisesVia*: Table[DocId, DocIdSet] ## Mapping between particular
-        ## raise and called procedure. Direct raises via `raise` statement
-        ## are not listed here.
-        raisesDirect*: DocIdSet
-        effectsVia*: Table[DocId, DocIdSet] ## Effect -> called procMapping
-        globalIO*: DocIdSet ## Global variables that procedure reads from
+        calls*: DocEntrySet ## Procedures called by entry
+        raises*: DocEntrySet ## Full list of potential raises of a procedure
+        effects*: DocEntrySet ## All effects for procedure body
+        raisesVia*: Table[DocEntryId, DocEntrySet] ## Mapping between
+        ## particular raise and called procedure. Direct raises via `raise`
+        ## statement are not listed here.
+        raisesDirect*: DocEntrySet
+        effectsVia*: Table[DocEntryId, DocEntrySet] ## Effect -> called
+                                                    ## procMapping
+        globalIO*: DocEntrySet ## Global variables that procedure reads from
                             ## or writes into.
 
       else:
@@ -362,19 +363,22 @@ type
     path*: FileIndex ## Absolute path to the original file
     body*: DocCode ## Full text with [[code:DocOccur][occurrence]]
                    ## annotations
-    moduleId*: Option[DocId]
+    moduleId*: Option[DocEntryId]
 
+declareStoreType(DocEntry)
+
+type
   DocDb* = ref object of RootRef
-    entries*: seq[DocEntry]
+    entries*: DocEntryStore
     files*: Table[FileIndex, DocFile]
     currentTop*: DocEntry
-    top*: seq[DocId]
-    named*: Table[string, DocEntry]
+    top*: seq[DocEntryId]
+    named*: Table[string, DocEntryId]
     expandedNodes*: Table[int, ExpansionId]
     expansions*: ExpansionStore ## List of known expansion bettween
     ## open/close for module
     occurencies*: DocOccurStore
-    sigmap*: Table[PSym, DocId]
+    sigmap*: Table[PSym, DocEntryId]
 
   DocContext* = ref object of PContext
     ## Documentation context object that is constructed for each open and
@@ -382,9 +386,9 @@ type
 
     db*: DocDb ## Documentation database that is persistent across all
     ## processing passes
-    docModule*: DocEntry ## Toplevel entry - module currently being
+    docModule*: DocEntryId ## Toplevel entry - module currently being
     ## processed
-    activeUser*: DocId ## Current active user for macro expansion
+    activeUser*: DocEntryId ## Current active user for macro expansion
     ## occurencies
     activeExpansion*: ExpansionId ## Id of the current active expansion.
     ## Points to valid one only if the expansion stack is not empty,
@@ -395,79 +399,65 @@ type
     toplevelExpansions*: seq[ExpansionId] ## List of toplevel macro or
     ## template expansions that were registered in the module
 
+declareStoreField(DocDb, entries, DocEntry)
 declareStoreField(DocDb, expansions, Expansion)
 declareStoreField(DocDb, occurencies, DocOccur)
 
-func `==`*(i1, i2: DocId): bool = i1.int == i2.int
-func isValid*(id: DocId): bool = (id.int != 0)
+func add*(de: var DocEntry, id: DocEntryId) =
+  de.nested.add id
 
-func add*(db: var DocDb, entry: var DocEntry): DocId =
-  result = db.entries.len.DocId()
-  db.entries.add entry
-  entry.db = db
-  entry.id = result
-
-func addTop*(db: var DocDb, entry: var DocEntry): DocId =
+func addTop*(db: var DocDb, entry: DocEntry): DocEntryId =
   result = db.add entry
   db.top.add result
 
-proc add*(de: DocEntry, other: DocEntry) = de.nested.add other.id
-proc add*(de: DocEntry, id: DocId) = de.nested.add id
-
-proc `[]`*(db: DocDb, entry: DocEntry): DocEntry = db.entries[entry.id.int]
-
-proc `[]`*(db: DocDb, id: DocId): DocEntry = db.entries[id.int]
-
-proc `[]`*(de: DocEntry, idx: int): DocEntry =
-  de.db.entries[de.nested[idx].int]
-
-func len*(s: DocIdSet): int = s.ids.len
-func incl*(s: var DocIdSet, id: DocId) =
+func len*(s: DocEntrySet): int = s.ids.len
+func incl*(s: var DocEntrySet, id: DocEntryId) =
   if id.int != 0:
     s.ids.incl id.int
 
-func `*`*(s1, s2: DocIdSet): DocIdSet = DocIdSet(ids: s1.ids * s2.ids)
-func `-`*(s1, s2: DocIdSet): DocIdSet = DocIdSet(ids: s1.ids - s2.ids)
+func `*`*(s1, s2: DocEntrySet): DocEntrySet = DocEntrySet(ids: s1.ids * s2.ids)
+func `-`*(s1, s2: DocEntrySet): DocEntrySet = DocEntrySet(ids: s1.ids - s2.ids)
 
-func excl*(s: var DocIdSet, id: DocId) = s.ids.excl id.int
-func contains*(s: DocIdSet, id: DocId): bool = id.int in s.ids
-iterator items*(s: DocIdSet): DocId =
+func excl*(s: var DocEntrySet, id: DocEntryId) = s.ids.excl id.int
+func contains*(s: DocEntrySet, id: DocEntryId): bool = id.int in s.ids
+iterator items*(s: DocEntrySet): DocEntryId =
   for i in s.ids:
-    yield DocId(i)
+    yield DocEntryId(i)
 
-func pop*(s: var DocIdSet): DocId =
+func pop*(s: var DocEntrySet): DocEntryId =
   for it in s:
     result = it
     s.excl result
 
-func incl*(table: var DocIdTableN, idKey, idVal: DocId) =
-  table.table.mgetOrPut(idKey, DocIdSet()).incl idVal
+func incl*(table: var DocIdTableN, idKey, idVal: DocEntryId) =
+  table.table.mgetOrPut(idKey, DocEntrySet()).incl idVal
 
-func incl*(s: var DocIdSet, entry: DocEntry) =
-  s.incl entry.id
+func incl*(s: var DocEntrySet, entry: DocEntry) =
+  s.incl entry
 
-proc getSub*(parent: DocEntry, subName: string): DocId =
-  for sub in parent.nested:
-    if parent.db[sub].name == subName:
+proc getSub*(db: DocDb, parent: DocEntryId, subName: string): DocEntryId =
+  for sub in db[parent].nested:
+    if db[sub].name == subName:
       return sub
 
 proc newDocEntry*(
       db: var DocDb, kind: DocEntryKind, name: string
-  ): DocEntry =
+  ): DocEntryId =
   ## Create new toplevel entry (package, file, module) directly using DB.
-  result = DocEntry(db: db, name: name, kind: kind)
-  result.id = db.add(result)
+  result = db.add(DocEntry(name: name, kind: kind))
 
 proc newDocEntry*(
-    parent: var DocEntry, kind: DocEntryKind, name: string
-  ): DocEntry =
+    db: var DocDb,
+    parent: DocEntryId, kind: DocEntryKind, name: string
+  ): DocEntryId =
   ## Create new nested document entry. Add it to subnode of `parent` node.
-  result = DocEntry(db: parent.db, name: name, kind: kind)
-  result.id = parent.db.add(result)
-  parent.nested.add result.id
+  result = db.add DocEntry(name: name, kind: kind)
+  db[parent].nested.add result
 
-proc getOrNew*(db: var DocDb, kind: DocEntryKind, name: string): DocEntry =
-  ## Get new documentable entry or construct a new one
+proc getOrNew*(db: var DocDb, kind: DocEntryKind, name: string): DocEntryId =
+  ## Get new documentable entry or construct a new one using kind and name.
+  ## Used primarilily for documentable entries such as `define()` flags,
+  ## that have no definition itself, and need to be added when first used.
   if name in db.named:
     result = db.named[name]
 
@@ -484,6 +474,3 @@ proc getExpansion*(db: DocDb, node: PNode): ExpansionId =
 
 func `$`*(slice: DocCodeSlice): string =
   &"{slice.line}:{slice.column.a}..{slice.column.b}"
-
-func `$`*(id: DocId): string =
-  &"<DocId-{id.int}>"
