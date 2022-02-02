@@ -4,6 +4,9 @@ import
     sem,
     passes
   ],
+  front/[
+    options
+  ],
   ast/[
     astalgo,
     ast,
@@ -26,12 +29,13 @@ import
   ./docgen_unparser,
   ./docgen_ast_aux,
   std/[
-    options,
     tables,
     hashes,
     strutils,
     intsets
   ]
+
+import std/options as std_options
 
 static:
   assert(
@@ -46,6 +50,67 @@ type
     docUser: DocEntryId ## Active toplevel user
     declContext: DocDeclarationContext ## Active documentation declaration
     ## context that will be passed to new documentable entry on construction.
+
+iterator visitWhen(visitor: DocVisitor, node: PNode): (DocVisitor, PNode) =
+  ## Iterate over all branches in 'when' statement, yielding new visitor
+  ## object with updated 'when' conditions.
+  var conditions: seq[PNode]
+  for branch in node:
+    var visitor = visitor
+    if branch.kind == nkElifBranch:
+       visitor.declContext.whenConditions.add branch[0]
+       conditions.add branch[0]
+       yield (visitor, branch[1])
+    else:
+       # TODO construct inverted condition from all branches seen earlier,
+       # add it as 'when condition' for the context.
+       yield (visitor, branch[0])
+
+
+proc registerPreUses(
+    conf: ConfigRef,
+    db: var DocDb,
+    visitor: DocVisitor,
+    node: PNode
+  ) =
+  ## Register all usage information that can be meaningfully collected
+  ## before semantic passes. For now this includes conditional import and
+  ## include usages.
+  let file = node.info.fileIndex
+
+  proc addImport(node: PNode) =
+    discard "TODO"
+
+  proc addInclude(node: PNode) =
+    discard "TODO"
+
+  proc aux(node: PNode, vistor: DocVisitor) =
+    case node.kind:
+      of nkImportStmt:
+        let file = node.info.fileIndex
+        for sub in node:
+          addImport(sub)
+
+      of nkFromStmt, nkImportExceptStmt:
+        addImport(node[0])
+
+      of nkIncludeStmt:
+        for sub in node:
+          addInclude(sub)
+
+      of nkStmtList, nkBlockStmt, nkStmtListExpr, nkBlockExpr:
+        for sub in node:
+          aux(sub, visitor)
+
+      of nkWhenStmt:
+        for (visitor, body) in visitWhen(visitor, node):
+          aux(body, visitor)
+
+      else:
+        discard
+
+  aux(node, visitor)
+
 
 proc newDocEntry(
     db: var DocDb,
@@ -114,11 +179,12 @@ proc getDeprecated(name: DefName): Option[string] =
       return some depr[1].getSName()
 
 proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntryId =
+  ## Register new procedure definition in the documentation database,
+  ## return constructed entry
   result = db.newDocEntry(
-    visitor.docUser,
+    visitor,
     db.classifyDeclKind(def),
-    def.sym.getSName(),
-    visitor.declContext
+    def.getSName()
   )
 
   let name = def.getSName()
@@ -292,9 +358,8 @@ proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
       db.registerDeclSection(visitor, node)
 
     of nkWhenStmt:
-      var visitor = visitor
-      visitor.declContext.whenConditions.add node[0]
-      registerTopLevel(db, visitor, node)
+      for (visitor, body) in visitWhen(visitor, node):
+        registerTopLevel(db, visitor, body)
 
     else:
       discard
@@ -392,6 +457,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
       ): PPassContext {.nimcall.} =
         var db = DocBackend(graph.backend).db
         return DocPreContext(
+          graph: graph,
           db: db,
           docModule: db.newDocEntry(ndkModule, module.name.s)
         )
@@ -403,8 +469,14 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
         var visitor = DocVisitor()
         visitor.docUser = ctx.docModule
 
+        # Perform initial registration of all the entries in the code -
+        # this one excludes all macro-generated ones, but includes
+        # conditionally enabled elements.
         registerTopLevel(ctx.db, visitor, n)
 
+        registerPreUses(ctx.graph.config, ctx.db, visitor, n)
+
+        result = n
     ),
     TPassClose(
       proc(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =

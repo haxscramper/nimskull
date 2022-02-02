@@ -409,11 +409,12 @@ type
     occurencies*: DocOccurStore
     sigmap*: Table[PSym, DocEntryId]
 
-  DocPreContext* = ref object of TContext
+  DocPreContext* = ref object of TPassContext
     ## Initial documntation analysis context that constructs a list of potential
     ## documentable entries using pre-sem visitation.
     db*: DocDb
 
+    graph*: ModuleGraph
     docModule*: DocEntryId ## Toplevel entry - module currently being
     ## processed
 

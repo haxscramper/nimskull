@@ -1,3 +1,10 @@
+## This module provides a list of type definitions and convenience
+## procedures for dealing with /entities/ declared in the code - objects,
+## enums, procedures. It provides additional layer of abstraction on top of
+## the AST, allowing user to work in terms `"if obj.exported"` as opposed
+## to `if obj[0].kind == nnkPrefix`. Recursively iterate fields,
+## definitions.
+
 import
   ast/[
     ast,
@@ -12,19 +19,21 @@ import
 
 type
   DefTreeKind* = enum
-    deftProc
-    deftObject
+    ## Definition tree kind
+    deftProc ## Procedure-like element
+    deftObject ## Object definitio
     deftEnum
-    deftArg
-    deftLet
-    deftVar
-    deftMagic
-    deftConst
-    deftField
-    deftEnumField
-    deftAlias
+    deftArg ## Procedure argument
+    deftLet ## 'let' variable declaration
+    deftVar ## 'var' declaration
+    deftMagic ## Declaration of the magic type
+    deftConst ## 'const' declaration
+    deftField ## Object field declaration
+    deftEnumField ## Enum field declaration
+    deftAlias ## Type alias declaration
 
   DefFieldKind* = enum
+    ## Kind of the object declaration
     deffPlain
     deffWrapCase
     deffWrapWhen
@@ -33,9 +42,11 @@ const deftIdentKinds* = { deftArg, deftLet, deftVar, deftConst, deftField }
 
 type
   DefName* = object
-    ident*: PNode
-    exported*: bool
-    pragmas*: seq[PNode]
+    ## Unparsed definition name, split into semantically meaningfuly chunks
+    ## that can be queried directly.
+    ident*: PNode ## Name identifier - symbol/ident/accquoted node
+    exported*: bool ## Whether or not original node was exported
+    pragmas*: seq[PNode] ## list of name pragmas
 
   DefFieldBranch* = object
     branchExprs*: seq[PNode]
@@ -87,17 +98,15 @@ func exported*(def: DefTree): bool = def.defName.exported
 func exported*(def: DefField): bool = def.head.exported
 func name*(def: DefTree): DefName = def.defName
 
-func sym*(def: DefName): PSym = def.ident.sym
-func sym*(def: DefTree): PSym = def.name.sym
+func nameNode*(def: DefName): PNode = def.ident
+func nameNode*(def: DefTree): PNode = def.name.nameNode()
 
-func hasSym*(def: DefTree): bool =
-  ## Check if unparsed definition tree has symbol in it's name (`nkSym`)
-  def.name.ident.kind == nkSym
+func sym*(def: DefName | DefTree): PSym = def.nameNode().sym
 
-func hasSym*(def: DefName): bool =
-  ## Check if unparsed name has a symbol node as head
-  def.ident.kind == nkSym
-
+func hasSym*(def: DefTree | DefName): bool =
+  ## Check if unparsed definition tree or name has symbol in it's name
+  ## (`nkSym`)
+  def.nameNode.kind == nkSym
 
 func getSName*(p: PNode): string =
   ## Get string value from `PNode`
@@ -114,6 +123,8 @@ func getSName*(p: PNode): string =
       assert false, "Unexpected kind for 'getSName' - " & $p.kind
 
 func filterPragmas*(pragmas: seq[PNode], names: seq[string]): seq[PNode] =
+  ## Filter out list of pragma nodes, returning only ones whose names
+  ## were in the `names` list.
   for pragma in pragmas:
     if pragma.safeLen > 0:
       case pragma[0].kind:
@@ -130,12 +141,9 @@ func filterPragmas*(pragmas: seq[PNode], names: seq[string]): seq[PNode] =
 
 
 proc getSName*(p: PSym): string = p.name.s
-
-func getSName*(def: DefName): string =
-  def.ident.getSName()
-
-func getSName*(def: DefTree): string = def.name.getSName()
-func getSName*(def: DefField): string = def.head.getSName()
+func getSName*(def: DefName | DefTree): string =
+  ## Get string name of definition tree or definition name
+  def.nameNode().getSName()
 
 func pragmas*(def: DefTree): seq[PNode] = def.name.pragmas
 func node*(def: DefTree): PNode = def.defNode
@@ -156,6 +164,8 @@ func newDef*(kind: DefTreeKind, name: DefName, node: PNode): DefTree =
   DefTree(kind: kind, defName: name, defNode: node)
 
 proc unparseName*(node: PNode): DefName =
+  ## Unparse name definition ast into `DefName`. Input node can be be a
+  ## `PragmaExpr`, `Postfix` or `Ident/Sym/AccQuoted` node.
   case node.kind:
     of nkPragmaExpr:
       case node[0].kind:
@@ -179,7 +189,7 @@ proc unparseName*(node: PNode): DefName =
       result.ident = node[1]
       result.exported = true
 
-    of nkIdent, nkSym:
+    of nkIdent, nkSym, nkAccQuoted:
       result.ident = node
 
     else:
