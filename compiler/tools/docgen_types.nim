@@ -298,8 +298,12 @@ type
 
 type
   DocEntry* = object
-    sym*: PSym
-    node*: PNode
+    ## Documentation entry for the
+    sym*: PSym ## Symbol that documentable entry was generated from.
+    ## Not all entries have that - `define()` targets, projects, libraries
+    ## and other elements might be constructed only during pre-sem analysis
+    ## and as a result might not have the symbols available.
+    node*: PNode ## Node that documentable entry was generated from
 
     location*: Option[TLineInfo]
     extent*: Option[DocExtent]
@@ -307,26 +311,33 @@ type
     ## documentable entry 'head'. Points to single identifier - entry name
     ## in declaration.
     ## - WHY :: Used in sourcetrail
-    nested*: seq[DocEntryId] ## Nested documentable entries. Not all
-    ## `DocEntryKind` is guaranteed to have one.
-    name*: string
-    visibility*: DocVisibilityKind
-    deprecatedMsg*: Option[string]
+    nested*: seq[DocEntryId] ## Nested documentable entries. Use to store
+    ## information about fields of a type (for variant fields this might have
+    ## more nested fields), arguments of a procedure, enum values and so on.
+    ## Module has all elements declared in it listed here, project has a list of
+    ## modules
+    name*: string ## Original identifier name, not disambiguated, without any
+    ## extra information about owner/type/generic parameters and so on.
+    visibility*: DocVisibilityKind ## Entry visibility from the
+    ## documentation reader prespective
+    deprecatedMsg*: Option[string] ## If entry was annotated with
+    ## `{.deprecated.}` contains the pragma text.
     docText*: DocText
 
     case kind*: DocEntryKind
       of ndkPackage:
-        version*: string
-        author*: string
-        license*: string
-        requires*: seq[DocRequires]
+        version*: string ## Textual version of the package
+        author*: string ## Package author name
+        license*: string ## Package license as written in the manifest file
+        requires*: seq[DocRequires] ## List of required packages
 
       of ndkModule:
-        imports*: DocEntrySet
-        exports*: DocEntrySet
+        imports*: DocEntrySet ## Modules imported by this module
+        exports*: DocEntrySet ## Documentable entries (modules, procs, types)
+        ## exported by the module.
 
       of ndkFile:
-        includes*: DocEntrySet
+        includes*: DocEntrySet ## Visited includes
 
       of ndkStructKinds:
         superTypes*: seq[DocEntryId]
@@ -337,23 +348,30 @@ type
         identDefault*: Option[DocCode] ## Expression for argument default
                                        ## value.
       of ndkAliasKinds:
-        baseType*: PNode
+        baseType*: Option[DocEntryID]
 
       of ndkProcKinds:
         procKind*: DocProcKind
-        wrapOf*: Option[string]
-        dynlibOf*: Option[string]
-        calls*: DocEntrySet ## Procedures called by entry
+        wrapOf*: Option[string] ## Optional C, C++ or JS pattern used
+        ## in the `.importX` pragma annotation
+        dynlibOf*: Option[string] ## Dynamic library pattern for the
+        ## procedures
+        calls*: DocEntrySet ## Procedures called by entry, for callgraph
+        ## construction.
         raises*: DocEntrySet ## Full list of potential raises of a procedure
-        effects*: DocEntrySet ## All effects for procedure body
+        ## including both direct and indirect ones
+        effects*: DocEntrySet ## All effects for procedure body, including
+        ## direct and indirect ones.
         raisesVia*: Table[DocEntryId, DocEntrySet] ## Mapping between
         ## particular raise and called procedure. Direct raises via `raise`
         ## statement are not listed here.
-        raisesDirect*: DocEntrySet
+        raisesDirect*: DocEntrySet ## List of exception types that
+        ## can be directly raised by the body
         effectsVia*: Table[DocEntryId, DocEntrySet] ## Effect -> called
-                                                    ## procMapping
+        ## procMapping. Allows to provide information about causes of the
+        ## particular effects in the procedure.
         globalIO*: DocEntrySet ## Global variables that procedure reads from
-                            ## or writes into.
+        ## or writes into.
 
       else:
         discard
@@ -380,9 +398,13 @@ type
     occurencies*: DocOccurStore
     sigmap*: Table[PSym, DocEntryId]
 
+  DocPreContext* = ref object of TContext
+    ## Initial documntation analysis context that constructs a list of potential
+    ## documentable entries using pre-sem visitation.
+
   DocContext* = ref object of PContext
-    ## Documentation context object that is constructed for each open and
-    ## close operation.
+    ## Documentation context object that is constructed for each open and close
+    ## operation. This documentation further elaborates on analysis of the daa
 
     db*: DocDb ## Documentation database that is persistent across all
     ## processing passes
@@ -399,6 +421,7 @@ type
     toplevelExpansions*: seq[ExpansionId] ## List of toplevel macro or
     ## template expansions that were registered in the module
 
+# DOD helper function declarations for the documentable entry database.
 declareStoreField(DocDb, entries, DocEntry)
 declareStoreField(DocDb, expansions, Expansion)
 declareStoreField(DocDb, occurencies, DocOccur)
