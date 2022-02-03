@@ -288,6 +288,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
 proc updateCommon(entry: var DocEntry, decl: DefTree) =
   entry.deprecatedMsg = getDeprecated(decl.name)
   entry.location = some decl.nameNode().info
+  entry.docText.text = decl.comment
   if decl.hasSym():
     entry.sym = decl.sym
 
@@ -646,8 +647,38 @@ proc writeEtags*(conf: ConfigRef, db: DocDb) =
       )
 
   close(tagfile)
+
+import std/json
+
+proc writeJsonLines*(conf: ConfigRef, db: DocDb) =
+  var jfile = open("/tmp/jsontags.json", fmWrite)
+
+  for id, entry in db.entries:
+    var res = %*{
+      "name": entry.name,
+      "id": id.int,
+      "kind": $entry.kind,
+      "visibility": $entry.visibility,
+      "doc": entry.docText.text
+    }
+
+    if entry.deprecatedMsg.isSome():
+      res["deprecated"] = %entry.deprecatedMsg.get()
+
+    if entry.location.isSome():
+      let loc = entry.location.get()
+      res["location"] = %*{
+        "file": conf.toMsgFilename(loc.fileIndex),
+        "line": $loc.line,
+        "col": $loc.col
+      }
+
+
+    jfile.writeLine($res)
+
+  close(jfile)
   
-proc commandDoc3*( graph: ModuleGraph, ext: string) =
+proc commandDoc3*(graph: ModuleGraph, ext: string) =
   ## Execute documentation generation command for module graph
   let db = setupDocPasses(graph)
   compileProject(graph)
@@ -658,3 +689,6 @@ proc commandDoc3*( graph: ModuleGraph, ext: string) =
 
   graph.config.writeEtags(db)
   echo "wrote etags to the /tmp/etags"
+
+  graph.config.writeJsonLines(db)
+  echo "wrote json to the /tmp/jtags"
