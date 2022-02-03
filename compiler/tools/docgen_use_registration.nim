@@ -572,54 +572,30 @@ proc registerUses*(ctx: DocContext, node: PNode, state: RegisterState) =
 
 type
   CodeWriter = object
-    code: DocCode ## Final chunk of the code to write out
+    code: string ## Final chunk of the code to write out
     line: int ## Current active line *index*
     column: int ## Current column
     indent: int ## Relative indentation - used for arranging multiple
     ## chunks of macro expansion code, not for indentation-based
     ## formatting.
+    file: FileIndex
 
-
-proc last(writer: var CodeWriter): var DocCodeLine =
-  if writer.code.codeLines.len == 0:
-    writer.code.codeLines.add newCodeLine(writer.line, "")
-
-  writer.code.codeLines[^1]
-
-proc lastPart(line: var DocCodeLine): var DocCodePart = line.parts[^1]
-
-proc add*(line: var DocCodeLine, text: string) =
-  line.text.add text
-  line.lineHigh += text.len
-
-proc expandLastPart(line: var DocCodeLine) =
-  ## Expand the last part of the line to it's maximum height
-  line.lastPart().slice.column.b = line.lineHigh
 
 proc add(writer: var CodeWriter, text: string) =
   ## Add piece of unformatted text to the last line, expanding last
   ## occurence if it does not have any occurence information
-  writer.last.add text
+  writer.code.add text
   writer.column += text.len
-  if writer.last().lastPart().occur.isNone():
-    writer.last().expandLastPart()
 
 proc addLine(writer: var CodeWriter) =
   ## Add new empty line to the code writer, accounting for active
   ## indentation
-  writer.code.codeLines.add newCodeLine(writer.line, "")
+  if 0 < len(writer.code):
+    writer.code.add "\n"
+
   inc writer.line
   writer.column = 0
   writer.add(repeat(" ", writer.indent))
-
-proc add(writer: var CodeWriter, text: string, occur: DocOccurId) =
-  let line = writer.line
-  let start = writer.column
-  add(writer, text)
-  let finish = writer.column
-  writer.last.parts.add newCodePart(
-    initDocSlice(line, start, finish), occur)
-
 
 proc writeCode(
     db: var DocDb,
@@ -677,14 +653,15 @@ proc writeCode(
             let id = db[node.sym]
             # TODO Occurence information can be added here,
             if not id.isNil():
-              writer.add(node.sym.name.s, db.add DocOccur(
-                inExpansionOf: some expand,
-                kind: dokInMacroExpansion,
-                refid: id
-              ))
+              let ocId = db.occur(
+                node = node,
+                kind = dokInMacroExpansion,
+                user = none DocEntryId
+              )
 
-            else:
-              writer.add(node.sym.name.s)
+              db[ocId].inExpansionOf = some expand
+
+            writer.add(node.sym.name.s)
 
           of nkFloatLiterals:
             writer.add $node.floatVal
@@ -734,8 +711,5 @@ proc registerExpansions*(ctx: DocContext) =
   for expand in ctx.toplevelExpansions:
     db.writeCode(expand, writer)
 
-  for line in writer.code.codeLines:
-    echo line.text
-    for part in line.parts:
-      if part.occur.isSome():
-        echo "> ", part
+  if 0 < len(writer.code):
+    echo writer.code

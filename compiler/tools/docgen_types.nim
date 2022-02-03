@@ -183,6 +183,14 @@ type
 declareStoreType(Expansion)
 
 type
+  DocCodeLocation* = object
+    ## Single continious slice of the code in file -
+    ## file/line:col-start:col-end information
+    file*: FileIndex
+    line*: int ## Code slice line /index/
+    column*: Slice[int] ## Column slice - start and stop position
+
+
   DocOccur* = object
     ## Single occurence of documentable entry. When DOD AST and token
     ## storage is implemented
@@ -194,6 +202,8 @@ type
     ## identifier (for local variables, arguments etc).
     inExpansionOf*: Option[ExpansionId]
 
+    slice*: DocCodeLocation ## Position of the occurence in the project
+    ## files.
     node*: PNode ## Node that occurence happened in. In the future this
     ## should be converted to node IDs
     case kind*: DocOccurKind ## Type of entry occurence
@@ -205,38 +215,10 @@ type
       else:
         refid*: DocEntryId ## Documentable entry id
 
+
 declareStoreType(DocOccur)
 
 type
-  DocCodeSlice* = object
-    ## Single continious slice of the code - line:col-start:col-end
-    ## information
-    line*: int ## Code slice line /index/
-    column*: Slice[int] ## Column slice - start and stop position
-
-  DocCodePart* = object
-    ## Single code part with optional occurence link.
-    slice*: DocCodeSlice ## Single-line slice of the code
-    occur*: Option[DocOccurId] ## 'link' to documentable entry
-
-  DocCodeLine* = object
-    ## Single line in the indexed file. Wraps the information about
-    ## occurence slices, line's text.
-    lineHigh*: int ## /max index/ (not just length) for target code line
-    text*: string ## Full text of the documentation code line
-    parts*: seq[DocCodePart] ## Parts of the code line that cover it
-    ## entirely, splitting between chunks that have occurence information
-    ## an ones that don't
-    overlaps*: seq[DocCodePart] ## sometimes it is not possible to
-    ## reliably determine extent of the identifier, which leads to
-    ## potentially overlapping code segments. Determining 'the correct' one
-    ## is hardly possible, so they are just dumped in the overlapping
-    ## section.
-
-  DocCode* = object
-    ## Block of source code with embedded occurence links.
-    codeLines*: seq[DocCodeLine]
-
   DocTypeHeandkind* = enum
     dthGenericParam ## Unresolved generic parameter
     dthTypeclass ## Typeclass
@@ -273,11 +255,6 @@ type
     ## Arbitrary grouping of the documentable entries
     entries*: seq[DocEntryId]
     nested*: seq[DocEntryGroup]
-
-  DocPragma* = object
-    name*: string
-    entry*: DocEntryId
-    args*: seq[DocCode]
 
   DocExtent* = object
     start*: TLineInfo
@@ -354,8 +331,9 @@ type
       of ndkArg, ndkField:
         identTypeStr*: Option[string]
         identType*: Option[PType] ## Argument type description
-        identDefault*: Option[DocCode] ## Expression for argument default
-                                       ## value.
+        identDefault*: Option[PNode] ## Expression for argument default
+        ## value.
+
       of ndkAliasKinds:
         baseType*: PNode ## Base type /expression/ of the alias. Might contain
         ## generic type with multiple parameters, so `PNode` is used here
@@ -387,19 +365,11 @@ type
       else:
         discard
 
-  DocFile* = object
-    ## Processed code file
-    path*: FileIndex ## Absolute path to the original file
-    body*: DocCode ## Full text with [[code:DocOccur][occurrence]]
-                   ## annotations
-    moduleId*: Option[DocEntryId]
-
 declareStoreType(DocEntry)
 
 type
   DocDb* = ref object of RootRef
     entries*: DocEntryStore
-    files*: Table[FileIndex, DocFile]
     currentTop*: DocEntry
     top*: seq[DocEntryId]
     named*: Table[string, DocEntryId]
@@ -514,5 +484,6 @@ proc getExpansion*(db: DocDb, node: PNode): ExpansionId =
   ## Get expansion tha tnode was generated from
   return db.expandedNodes[node.id]
 
-func `$`*(slice: DocCodeSlice): string =
-  &"{slice.line}:{slice.column.a}..{slice.column.b}"
+func `$`*(slice: DocCodeLocation): string =
+  &"{slice.file.int}/{slice.line}:{slice.column.a}..{slice.column.b}"
+

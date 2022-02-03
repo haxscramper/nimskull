@@ -178,11 +178,11 @@ proc `[]`*(db: DocDb, ntype: PType | PNode | PSym): DocEntryId =
 
 proc `[]`*(ctx: DocContext, n: PType | PNode | PSym): DocEntryId = ctx.db[n]
 
-proc contains(s1, s2: DocCodeSlice): bool =
+proc contains(s1, s2: DocCodeLocation): bool =
   s1.line == s2.line and
   s1.column.a <= s2.column.a and s2.column.b <= s1.column.b
 
-func `[]`*[R1, R2](slice: DocCodeSlice, split: HSlice[R1, R2]): DocCodeSlice =
+func `[]`*[R1, R2](slice: DocCodeLocation, split: HSlice[R1, R2]): DocCodeLocation =
   result = slice
   when R1 is BackwardsIndex:
     result.column.a = result.column.b - split.a.int
@@ -196,20 +196,23 @@ func `[]`*[R1, R2](slice: DocCodeSlice, split: HSlice[R1, R2]): DocCodeSlice =
   else:
     result.column.a = result.column.a + split.b
 
-func `-=`*(slice: var DocCodeSlice, shift: int) =
+func `-=`*(slice: var DocCodeLocation, shift: int) =
   slice.column.a -= shift
   slice.column.b -= shift
 
-proc initDocSlice*(line, startCol, endCol: int): DocCodeSlice =
+proc initDocSlice*(
+    line, startCol, endCol: int, file: FileIndex): DocCodeLocation =
   if endCol == -1:
-    DocCodeSlice(line: line, column: Slice[int](a: -1, b: -1))
+    DocCodeLocation(
+      line: line, column: Slice[int](a: -1, b: -1), file: file)
 
   else:
     assert startCol <= endCol, &"{startCol} <= {endCol}"
-    DocCodeSlice(line: line, column: Slice[int](a: startCol, b: endCol))
+    DocCodeLocation(
+      line: line, column: Slice[int](a: startCol, b: endCol), file: file)
 
-proc splitOn*(base, sep: DocCodeSlice):
-  tuple[before, after: Option[DocCodeSlice]] =
+proc splitOn*(base, sep: DocCodeLocation):
+  tuple[before, after: Option[DocCodeLocation]] =
 
   if base.column.a == sep.column.a and
      base.column.b == sep.column.b:
@@ -220,7 +223,7 @@ proc splitOn*(base, sep: DocCodeSlice):
       # [base text  ... (anything)]
       #          < [separator text]
       result.before = some initDocSlice(
-        base.line, base.column.a, sep.column.a - 1)
+        base.line, base.column.a, sep.column.a - 1, base.file)
 
     elif base.column.a == sep.column.a:
       discard
@@ -232,7 +235,7 @@ proc splitOn*(base, sep: DocCodeSlice):
       # [... (anything)  base text]
       # [separator text] <
       result.after = some initDocSlice(
-        base.line, sep.column.b + 1, base.column.b)
+        base.line, sep.column.b + 1, base.column.b, base.file)
 
     elif sep.column.b == base.column.b:
       discard
@@ -242,73 +245,19 @@ proc splitOn*(base, sep: DocCodeSlice):
 
 
 
-proc newCodePart*(slice: DocCodeSlice): DocCodePart =
-  ## Construct new code part without any documentable occurence information
-  DocCodePart(slice: slice)
 
-proc newCodePart*(slice: DocCodeSlice, occur: DocOccurId): DocCodePart =
-  ## Create new annotated code part with given documentable occurence id
-  DocCodePart(slice: slice, occur: some occur)
-
-proc newCodeLine*(idx: int, line: string): DocCodeLine =
-  DocCodeLine(
-    lineHigh: line.high,
-    text: line,
-    parts: @[newCodePart(initDocSlice(idx, 0, line.high))])
-
-
-
-proc add*(line: var DocCodeLine, other: DocCodePart) =
-  var idx = 0
-  while idx < line.parts.len:
-    if other.slice in line.parts[idx].slice:
-      let split = line.parts[idx].slice.splitOn(other.slice)
-      var offset = 0
-      if split.before.isSome():
-        line.parts.insert(newCodePart(split.before.get()), idx)
-        inc offset
-
-      line.parts[idx + offset] = other
-
-      if split.after.isSome():
-        line.parts.insert(newCodePart(split.after.get()), idx + 1 + offset)
-
-      return
-
-    inc idx
-
-  line.overlaps.add other
-
-proc add*(code: var DocCode, other: DocCodePart) =
-  code.codeLines[other.slice.line - 1].add other
-
-proc add*(code: var DocCode, line: DocCodeLine) =
-  code.codeLines.add line
-
-proc newCodeBlock*(text: seq[string]): DocCode =
-  for idx, line in text:
-    result.codeLines.add newCodeLine(idx + 1, line)
-
-proc newDocFile*(ctx: DocContext, file: FileIndex): DocFile =
-  result.path = file
-  for idx, line in enumerate(lines(
-    ctx.graph.config.m.fileInfos[file.int].fullPath.string
-  )):
-    result.body.add newCodeLine(idx + 1, line)
-
-proc nodeSlice(node: PNode): DocCodeSlice =
+proc nodeSlice(node: PNode): DocCodeLocation =
   let l = len($node)
   initDocSlice(
     node.info.line.int,
     node.info.col.int,
-    node.info.col.int + l - 1
+    node.info.col.int + l - 1,
+    node.info.fileIndex
   )
 
-proc nodeExprSlice(node: PNode): DocCodeSlice =
+proc nodeExprSlice(node: PNode): DocCodeLocation =
   ## Return source code slice for `node`.
-  let l = len($node)
-  let i = node.info
-  result = initDocSlice(i.line.int, i.col.int, i.col.int + l - 1)
+  result = nodeSlice(node)
   case node.kind:
     of nkDotExpr:
       result -= len($node[0]) - 1
@@ -317,7 +266,7 @@ proc nodeExprSlice(node: PNode): DocCodeSlice =
       discard
 
 
-proc subslice(parent, node: PNode): DocCodeSlice =
+proc subslice(parent, node: PNode): DocCodeLocation =
   let main = parent.nodeExprSlice()
   case parent.kind:
     of nkDotExpr: result = main[^(len($node)) .. ^1]
@@ -369,18 +318,6 @@ proc nodeExtent*(node: PNode): DocExtent =
   result.start = startPos(node)
   result.finish = finishPos(node)
 
-proc newOccur(
-    ctx: DocContext,
-    position: DocCodeSlice,
-    file: FileIndex,
-    occur: DocOccurId
-  ) =
-
-  if file notin ctx.db.files:
-    ctx.db.files[file] = newDocFile(ctx, file)
-
-  ctx.db.files[file].body.add newCodePart(position, occur)
-
 proc occur*(
     db: var DocDb,
     node: PNode,
@@ -396,18 +333,6 @@ proc occur*(
     occur.refid = db[node]
 
   return db.occurencies.add occur
-
-proc occur*(
-    ctx: DocContext,
-    node: PNode,
-    id: DocEntryId,
-    kind: DocOccurKind,
-    user: Option[DocEntryId]
-  ) =
-
-  var occur = DocOccur(kind: kind, user: user, node: node)
-  occur.refid = id
-  discard ctx.db.occurencies.add occur
 
 proc occur*(
     db: var DocDb,
