@@ -696,6 +696,7 @@ proc writeCode(
             writer.add $node
 
 
+
 proc writeCode(
     db: var DocDb,
     expand: ExpansionId,
