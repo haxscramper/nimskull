@@ -14,7 +14,8 @@ import
     trees,
     types,
     wordrecg,
-    renderer
+    renderer,
+    lineinfos
   ],
   modules/[
     modulegraphs,
@@ -559,12 +560,12 @@ proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
 
     r.add &"[{id.int}]: {e().visibility} {e().kind} '{e().name}'"
 
+    if e().location.isSome():
+      r.add " in "
+      r.add conf.toFileLineCol(e().location.get())
+
     if e().context.preSem:
       r.add " (presem)"
-
-    if e().location.isSome():
-      r.add " loc: "
-      r.add conf.toFileLineCol(e().location.get())
 
     if e().deprecatedMsg.isSome():
       r.add " deprecated"
@@ -589,7 +590,7 @@ proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
     if e().kind notin dokLocalKinds and
        not e().refid.isNil():
 
-      r.add &" of {e().refid.int} ({db[e().refid].kind})"
+      r.add &" of [{e().refid.int}] ({db[e().refid].kind})"
 
     r.add &" at {e().slice}"
 
@@ -603,6 +604,48 @@ proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
 
   res.close()
 
+proc writeEtags*(conf: ConfigRef, db: DocDb) =
+  var tagfile = open("/tmp/etags", fmWrite)
+  # https://git.savannah.gnu.org/cgit/emacs.git/tree/etc/ETAGS.EBNF
+
+  const
+    FF = '\x0c'  # tag section starter
+    LF = '\x0a'  # line terminator
+    DEL = '\x7f' # pattern terminator
+    SOH = '\x01' # name terminator
+
+  var perFile: Table[FileIndex, DocEntrySet]
+  for id, entry in db.entries:
+    if entry.location.isSome():
+      perFile.mgetOrPut(
+        entry.location.get().fileIndex, DocEntrySet()).incl id
+
+  # `tagfile ::= { tagsection }` - etags file consists of multiple
+  # (unlimited number of) repeating sections
+  for file, ids in perFile:
+    # Each tagsection is `tagsection ::= FF LF ( includesec | regularsec ) LF` -
+    # in this case we are only writing `regularspec` for now.
+    tagfile.write(FF, LF) # Common stat indicators
+    # `regularsec ::= filename "," [ unsint ] [ LF fileprop ] { LF tag }`
+
+    # `filename`
+    tagfile.write(conf.toMsgFilename(file), ",")
+    for id in ids: # `{ LF tag }`
+      tagfile.write(LF)
+      # `tag ::= directtag | patterntag`
+      # `patterntag ::= pattern DEL [ tagname SOH ] position`
+      # `position ::= realposition | ","`
+      # `realposition ::= "," unsint | unsint "," | unsint "," unsint`
+      tagfile.write(
+        # `pattern DEl`
+        "test", DEL,
+        # `tagname SOH`
+        db[id].name, SOH,
+        # `position -> realposition -> unsint "," unsint`
+        db[id].location.get().line, ",", db[id].location.get().col
+      )
+
+  close(tagfile)
   
 proc commandDoc3*( graph: ModuleGraph, ext: string) =
   ## Execute documentation generation command for module graph
@@ -612,3 +655,6 @@ proc commandDoc3*( graph: ModuleGraph, ext: string) =
 
   graph.config.writeFlatDump(db)
   echo "wrote list of tags to the /tmp/res_dump"
+
+  graph.config.writeEtags(db)
+  echo "wrote etags to the /tmp/etags"
