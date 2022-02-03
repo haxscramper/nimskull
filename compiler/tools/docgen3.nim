@@ -567,13 +567,16 @@ proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
       r.add conf.toFileLineCol(e().location.get())
 
     if e().deprecatedMsg.isSome():
-      r.add " deprecated: ''"
-      r.add e().deprecatedMsg.get()
-      r.add "'"
+      r.add " deprecated"
+      if e().deprecatedMsg.get().len > 0:
+        r.add ": '"
+        r.add e().deprecatedMsg.get()
+        r.add "'"
 
     if e().docText.text.len > 0:
-      r.add " doc: "
+      r.add " doc: '"
       r.add e().docText.text.replace("\n", "\\n")
+      r.add "'"
 
     res.writeLine(r)
 
