@@ -173,11 +173,15 @@ proc unparseName*(node: PNode): DefName =
           result.ident = node[0][1]
           result.exported = true
 
-        of nkIdent, nkSym, nkAccQuoted:
+        of nkIdent, nkAccQuoted:
           # NOTE not entirely sure about `AccQuoted` here, but technically
           # it /is/ name - no need to reassemble the identifier from pices
           # here.
           result.ident = node[0]
+
+        of nkSym:
+          result.ident = node[0]
+          result.exported = sfExported in node[0].sym.flags
 
         else:
           failNode node
@@ -189,8 +193,12 @@ proc unparseName*(node: PNode): DefName =
       result.ident = node[1]
       result.exported = true
 
-    of nkIdent, nkSym, nkAccQuoted:
+    of nkIdent, nkAccQuoted:
       result.ident = node
+
+    of nkSym:
+      result.ident = node
+      result.exported = sfExported in node.sym.flags
 
     else:
       failNode node

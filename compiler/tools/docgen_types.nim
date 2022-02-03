@@ -106,11 +106,12 @@ type
 
     dokUsage = "usage"
     dokCall = "call"
+    dokExpansion = "expansion"
 
     dokInheritFrom = "inheritFrom"
     dokOverride = "override"
     dokMacroUsage = "macroUse"
-    dokAnnotationUsage
+    dokAnnotationUsage = "annotation"
 
     # local section start
     dokLocalUse = "localUse" ## Generic 'use' of local entry
@@ -267,6 +268,7 @@ type
 
 type
   DocDeclarationContext* = object
+    preSem*: bool
     ## Active context of the documentable entry declarations
     whenConditions*: seq[PNode] ## List of nested 'when' statements that were
     ## encountered during recursive visitation.
@@ -438,6 +440,8 @@ func incl*(s: var DocEntrySet, entry: DocEntry) =
 
 proc getSub*(db: DocDb, parent: DocEntryId, subName: string): DocEntryId =
   for sub in db[parent].nested:
+    echo "nested ", sub
+    echo "trying sub name ", db[sub].name
     if db[sub].name == subName:
       return sub
 

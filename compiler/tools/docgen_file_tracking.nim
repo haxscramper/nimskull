@@ -246,7 +246,7 @@ proc splitOn*(base, sep: DocCodeLocation):
 
 
 
-proc nodeSlice(node: PNode): DocCodeLocation =
+proc nodeSlice*(node: PNode): DocCodeLocation =
   let l = len($node)
   initDocSlice(
     node.info.line.int,
@@ -340,20 +340,19 @@ proc occur*(
     parent: PNode,
     id: DocEntryId,
     kind: DocOccurKind,
-    user: Option[DocEntryId]
+    user: Option[DocEntryId] = none DocEntryId
   ): DocOccurId =
   ## Construct new docmentable entry occurence and return new ID
   var occur = DocOccur(kind: kind, user: user, slice: nodeSlice(node))
   occur.refid = id
   return db.add occur
 
-
 proc occur*(
     db: var DocDb,
     node: PNode,
     id: DocEntryId,
     kind: DocOccurKind,
-    user: Option[DocEntryId]
+    user: Option[DocEntryId] = none DocEntryId
   ): DocOccurId =
   ## Construct new docmentable entry occurence and return new ID
   var occur = DocOccur(kind: kind, user: user, slice: nodeSlice(node))

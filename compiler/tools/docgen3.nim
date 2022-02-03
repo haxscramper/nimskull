@@ -390,6 +390,7 @@ proc preExpand(context: PContext, expr: PNode, sym: PSym) =
     # If there are no other active expansions, register current one as a
     # toplevel entry
     ctx.toplevelExpansions.add active
+    discard ctx.db.occur(expr, ctx.db[sym], dokExpansion)
 
   else:
     ctx.db.expansions[ctx.expansionStack[^1]].nested.add active
@@ -469,6 +470,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
         assert not ctx.db.isNil()
         var visitor = DocVisitor()
         visitor.docUser = ctx.docModule
+        visitor.declContext.preSem = true
 
         # Perform initial registration of all the entries in the code -
         # this one excludes all macro-generated ones, but includes
@@ -556,6 +558,10 @@ proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
     template e(): untyped = db[id]
 
     r.add &"[{id.int}]: {e().visibility} {e().kind} '{e().name}'"
+
+    if e().context.preSem:
+      r.add " (presem)"
+
     if e().location.isSome():
       r.add " loc: "
       r.add conf.toFileLineCol(e().location.get())
@@ -577,8 +583,10 @@ proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
     template e(): untyped = db[id]
 
     r.add &"[{id.int}]: {e().kind}"
-    if e().kind notin dokLocalKinds:
-      r.add &" of {e().refid.int}"
+    if e().kind notin dokLocalKinds and
+       not e().refid.isNil():
+
+      r.add &" of {e().refid.int} ({db[e().refid].kind})"
 
     r.add &" at {e().slice}"
 
