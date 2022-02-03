@@ -19,72 +19,65 @@ type
     ## - NOTE :: Different procedure kinds are also used to describe
     ##   operator implementations.
     # procedure kinds start
-    ndkProc ## Procedure definition
-    ndkFunc ## Procedure definition
+    ndkProc = "proc" ## Procedure definition
+    ndkFunc = "func" ## Procedure definition
 
-    ndkMacro ## Macro
-    ndkMethod ## Method
-    ndkTemplate ## \
-    ndkIterator ## \
-    ndkConverter ## User-defined implicit conversion
+    ndkMacro = "macro" ## Macro
+    ndkMethod = "method" ## Method
+    ndkTemplate = "template" ## \
+    ndkIterator = "iterator" ## \
+    ndkConverter = "converter" ## User-defined implicit conversion
     # procedure kinds end
 
 
-    ndkParam ## Generic parameters
-    ndkArg ## Entry (function, procedure, macro, template) arguments
-    ndkInject ## Variable injected into the scope by template/macro
-              ## instantiation.
-    ndkPragma ## Compiler-specific directives `{.pragma.}` in nim,
-              ## `#pragma` in C++ and `#[(things)]` from rust.
+    ndkParam = "param" ## Generic parameters
+    ndkArg = "arg" ## Entry (function, procedure, macro, template) arguments
+    ndkInject = "inject" ## Variable injected into the scope by
+    ## template/macro instantiation.
+    ndkPragma = "pragma" ## Compiler-specific directives `{.pragma.}` in
+    ## nim, `#pragma` in C++ and `#[(things)]` from rust.
 
     # new type kinds start
-    ndkBuiltin ## Builtin type, not defined using any other types
-    ndkObject
-    ndkException ## Exception object
-    ndkDefect ## Nim defect object
-    ndkConcept ## General concept
-    ndkTypeclass
-    ndkUnion
-    ndkEnum ## Enumeration
-    ndkEffect ## Side effect tag
-    ndkAlias ## Typedef
-    ndkDistinctAlias ## strong typedef
+    ndkBuiltin = "builtin" ## Builtin type, not defined using any other types
+    ndkObject = "object"
+    ndkException = "exception" ## Exception object
+    ndkDefect = "defect" ## Nim defect object
+    ndkConcept = "concet" ## General concept
+    ndkTypeclass = "typeclass"
+    ndkUnion = "union"
+    ndkEnum = "enum" ## Enumeration
+    ndkEffect = "effect" ## Side effect tag
+    ndkAlias = "alias" ## Typedef
+    ndkDistinctAlias = "distinct" ## strong typedef
 
 
     # variable-like entries
-    ndkCompileDefine ## Compile-time `define` that might affect compilation
-                     ## of the program.
+    ndkCompileDefine = "define" ## Compile-time `define` that might affect
+    ## compilation of the program.
 
-    ndkGlobalConst ## Global immutable compile-time constant
-    ndkGlobalVar ## Global mutable variable
-    ndkGlobalLet ## Global immutable variable
-    ndkField ## object/struct field
-    ndkEnumField ## Enum field/constant
+    ndkGlobalConst = "globalconst" ## Global immutable compile-time constant
+    ndkGlobalVar = "globalvar" ## Global mutable variable
+    ndkGlobalLet = "globallet" ## Global immutable variable
+    ndkField = "field" ## object/struct field
+    ndkEnumField = "enumfield" ## Enum field/constant
     # end
 
-    ndkModule ## Module (C header file, nim/python/etc. module)
-    ndkFile ## Global or local file
-    ndkPackage ## System or programming language package (library). If
-               ## present used as toplevel grouping element.
-
-    ndkImport ## 'modern' import semantics
-    ndkInclude ## C-style text-based include
-    ndkDepend ## Interpackage dependency relations
-
-    ndkSchema ## Serialization schema
-
+    ndkModule = "module" ## Module (C header file, nim/python/etc. module)
+    ndkFile = "file" ## Global or local file
+    ndkPackage = "package" ## System or programming language package
+    ## (library). If present used as toplevel grouping element.
 
   DocProcKind* = enum
-    dpkRegular
-    dpkOperator
-    dpkConstructor
-    dpkDestructor
-    dpkMoveOverride
-    dpkCopyOverride
-    dpkAsgnOverride
-    dpkPropertyGet
-    dpkPropertySet
-    dpkPredicate
+    dpkRegular = "regular"
+    dpkOperator = "operator"
+    dpkConstructor = "=init"
+    dpkDestructor = "=destroy"
+    dpkMoveOverride = "=sink"
+    dpkCopyOverride = "=copy"
+    dpkAsgnOverride = "asgn"
+    dpkPropertyGet = "getter"
+    dpkPropertySet = "setter"
+    dpkPredicate = "predicate"
 
 
 
@@ -100,62 +93,61 @@ type
   DocOccurKind* = enum
     dokNone
 
-    dokTypeDirectUse ## Direct use of non-generic type
-    dokTypeAsParameterUse ## Use as a parameter in generic specialization
-    dokTypeSpecializationUse ## Specialization of generic type using other
-                             ## types
+    dokTypeDirectUse = "typeDirect" ## Direct use of non-generic type
+    dokTypeAsParameterUse = "typeAsParam" ## Use as a parameter in generic
+                                          ## specialization
+    dokTypeSpecializationUse = "typeAsSpecialization" ## Specialization of
+                             ## generic type using other types
 
-    dokTypeAsArgUse
-    dokTypeAsReturnUse
-    dokTypeAsFieldUse
-    dokTypeConversionUse
+    dokTypeAsArgUse = "typeasArg"
+    dokTypeAsReturnUse = "typeAsReturn"
+    dokTypeAsFieldUse = "typeAsField"
+    dokTypeConversionUse = "typeconv"
 
-    dokUsage
-    dokCall
+    dokUsage = "usage"
+    dokCall = "call"
 
-    dokInheritFrom
-    dokOverride
-    dokInclude
-    dokImport
-    dokMacroUsage
+    dokInheritFrom = "inheritFrom"
+    dokOverride = "override"
+    dokMacroUsage = "macroUse"
     dokAnnotationUsage
 
     # local section start
-    dokLocalUse ## Generic 'use' of local entry
-    dokLocalWrite
-    dokLocalRead
+    dokLocalUse = "localUse" ## Generic 'use' of local entry
+    dokLocalWrite = "localWrite"
+    dokLocalRead = "localRead"
 
 
     # local declaration section start
-    dokLocalArgDecl
-    dokLocalVarDecl
+    dokLocalArgDecl = "localArgDecl"
+    dokLocalVarDecl = "localVarDecl"
     # local declarations section end
     # local section end
 
-    dokGlobalWrite ## Asign value to global variable
-    dokGlobalRead ## Non-asign form of global variable usage. Taking
-    ## address and mutating, passing to function that accepts `var`
-    ## parameter etc. would count as 'read' action.
-    dokGlobalDeclare
+    dokGlobalWrite = "globalWrite" ## Asign value to global variable
+    dokGlobalRead = "globalRead" ## Non-asign form of global variable
+    ## usage. Taking address and mutating, passing to function that accepts
+    ## `var` parameter etc. would count as 'read' action.
+    dokGlobalDeclare = "globalDecl"
 
-    dokFieldUse
-    dokFieldSet
-    dokEnumFieldUse
+    dokFieldUse = "fieldGet"
+    dokFieldSet = "fieldSet"
+    dokEnumFieldUse = "enumFieldUse"
 
-    dokFieldDeclare
-    dokCallDeclare
-    dokAliasDeclare
-    dokObjectDeclare
-    dokEnumDeclare
-    dokEnumFieldDeclare
+    dokFieldDeclare = "fieldDecl"
+    dokCallDeclare = "callDecl"
+    dokAliasDeclare = "aliasDecl"
+    dokObjectDeclare = "objectDecl"
+    dokEnumDeclare = "enumDecl"
+    dokEnumFieldDeclare = "enumfieldDecl"
 
     dokDefineCheck
 
-    dokImported
-    dokExported
-    dokIncluded
+    dokImported = "imported"
+    dokExported = "exported"
+    dokIncluded = "included"
 
-    dokInMacroExpansion
+    dokInMacroExpansion = "inExpansion"
 
 
 const
@@ -264,9 +256,9 @@ type
     text*: string
 
   DocVisibilityKind* = enum
-    dvkPrivate ## Not exported
-    dvkInternal ## Exported, but only for internal use
-    dvkPublic ## Exported, available for public use
+    dvkPrivate = "private" ## Not exported
+    dvkInternal = "internal" ## Exported, but only for internal use
+    dvkPublic = "public" ## Exported, available for public use
 
   DocRequires* = object
     name*: string
@@ -465,7 +457,8 @@ proc newDocEntry*(
   result = db.add DocEntry(name: name, kind: kind, context: context)
   db[parent].nested.add result
 
-proc getOrNew*(db: var DocDb, kind: DocEntryKind, name: string): DocEntryId =
+proc getOrNewNamed*(
+    db: var DocDb, kind: DocEntryKind, name: string): DocEntryId =
   ## Get new documentable entry or construct a new one using kind and name.
   ## Used primarilily for documentable entries such as `define()` flags,
   ## that have no definition itself, and need to be added when first used.
@@ -474,6 +467,7 @@ proc getOrNew*(db: var DocDb, kind: DocEntryKind, name: string): DocEntryId =
 
   else:
     result = db.newDocEntry(kind, name)
+    db.named[name] = result
 
 func isFromMacro*(db: DocDb, node: PNode): bool =
   ## Check if the node node was created during macro expansion

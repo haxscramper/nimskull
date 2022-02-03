@@ -325,7 +325,7 @@ proc occur*(
     user: Option[DocEntryId]
   ): DocOccurId =
 
-  var occur = DocOccur(user: user, kind: kind)
+  var occur = DocOccur(user: user, kind: kind, slice: nodeSlice(node))
   if kind in dokLocalKinds:
     assert false, "Unexpected kind for occur " & $kind
 
@@ -343,7 +343,7 @@ proc occur*(
     user: Option[DocEntryId]
   ): DocOccurId =
   ## Construct new docmentable entry occurence and return new ID
-  var occur = DocOccur(kind: kind, user: user)
+  var occur = DocOccur(kind: kind, user: user, slice: nodeSlice(node))
   occur.refid = id
   return db.add occur
 
@@ -356,7 +356,7 @@ proc occur*(
     user: Option[DocEntryId]
   ): DocOccurId =
   ## Construct new docmentable entry occurence and return new ID
-  var occur = DocOccur(kind: kind, user: user)
+  var occur = DocOccur(kind: kind, user: user, slice: nodeSlice(node))
   occur.refid = id
   return db.add occur
 
@@ -369,7 +369,7 @@ proc occur*(
   ): DocOccurId =
   ## Construct new occurence of the local documentable entry and return the
   ## resulting ID
-  var occur = DocOccur(kind: kind)
+  var occur = DocOccur(kind: kind, slice: nodeSlice(node))
   occur.localId = localid
   occur.withInit = withInit
 

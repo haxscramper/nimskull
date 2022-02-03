@@ -5,7 +5,8 @@ import
     passes
   ],
   front/[
-    options
+    options,
+    msgs
   ],
   ast/[
     astalgo,
@@ -32,7 +33,8 @@ import
     tables,
     hashes,
     strutils,
-    intsets
+    intsets,
+    strformat
   ]
 
 import std/options as std_options
@@ -282,6 +284,15 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
 
 
 
+proc updateCommon(entry: var DocEntry, decl: DefTree) =
+  entry.deprecatedMsg = getDeprecated(decl.name)
+  entry.location = some decl.nameNode().info
+  if decl.hasSym():
+    entry.sym = decl.sym
+
+  if decl.exported:
+    entry.visibility = dvkPublic
+
 proc registerDeclSection(
     db: var DocDb,
     visitor: DocVisitor,
@@ -312,21 +323,11 @@ proc registerDeclSection(
         var doc = db.newDocEntry(
           visitor, nodeKind, def.getSName())
 
-        if def.exported:
-          db[doc].visibility = dvkPublic
-
         db.addSigmap(node[0], doc)
+        db[doc].updateCommon(def)
 
     else:
       failNode node
-
-proc updateCommon(entry: var DocEntry, decl: DefTree) =
-  entry.deprecatedMsg = getDeprecated(decl.name)
-  if decl.hasSym():
-    entry.sym = decl.sym
-
-  if decl.exported:
-    entry.visibility = dvkPublic
 
 
 proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
@@ -547,8 +548,56 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
 
   return back.db
 
-proc commandDoc3*(graph: ModuleGraph, ext: string) =
+proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
+  var res = open("/tmp/res_dump", fmWrite)
+  res.writeLine("DOCUMENTABLE ENTRIES:")
+  for id, entry in db.entries:
+    var r: string
+    template e(): untyped = db[id]
+
+    r.add &"[{id.int}]: {e().visibility} {e().kind} '{e().name}'"
+    if e().location.isSome():
+      r.add " loc: "
+      r.add conf.toFileLineCol(e().location.get())
+
+    if e().deprecatedMsg.isSome():
+      r.add " deprecated: ''"
+      r.add e().deprecatedMsg.get()
+      r.add "'"
+
+    if e().docText.text.len > 0:
+      r.add " doc: "
+      r.add e().docText.text.replace("\n", "\\n")
+
+    res.writeLine(r)
+
+  res.writeLine("OCCURENCIES:")
+  for id, entry in db.occurencies:
+    var r: string
+    template e(): untyped = db[id]
+
+    r.add &"[{id.int}]: {e().kind}"
+    if e().kind notin dokLocalKinds:
+      r.add &" of {e().refid.int}"
+
+    r.add &" at {e().slice}"
+
+    if e().user.isSome():
+      r.add &" user: {e().user.get().int}"
+
+    if e().inExpansionOf.isSome():
+      r.add &" expansion: {e().inExpansionOf.get().int}"
+
+    res.writeLine(r)
+
+  res.close()
+
+  
+proc commandDoc3*( graph: ModuleGraph, ext: string) =
   ## Execute documentation generation command for module graph
   let db = setupDocPasses(graph)
   compileProject(graph)
   echo "Compiled documentation generator project"
+
+  graph.config.writeFlatDump(db)
+  echo "wrote list of tags to the /tmp/res_dump"

@@ -340,7 +340,7 @@ proc registerSymbolUse(
       discard # ???
 
     of skModule:
-      discard db.occur(node, dokImport, some(state.moduleId))
+      discard db.occur(node, dokImported, some(state.moduleId))
       case state.top():
         of rskImport:
           db[state.moduleId].imports.incl ctx[node]
@@ -381,11 +381,11 @@ proc impl(
           discard db.occur(node, sub, dokEnumFieldUse, state.user)
 
       elif state.top() == rskDefineCheck:
-        let def = db.getOrNew(ndkCompileDefine, $node)
+        let def = db.getOrNewNamed(ndkCompileDefine, $node)
         discard db.occur(node, def, dokDefineCheck, state.user)
 
       elif state.top() == rskPragma:
-        let def = db.getOrNew(ndkPragma, $node)
+        let def = db.getOrNewNamed(ndkPragma, $node)
         discard db.occur(node, def, dokAnnotationUsage, state.user)
 
       elif state.top() == rskObjectFields:
@@ -710,6 +710,3 @@ proc registerExpansions*(ctx: DocContext) =
   var writer = CodeWriter()
   for expand in ctx.toplevelExpansions:
     db.writeCode(expand, writer)
-
-  if 0 < len(writer.code):
-    echo writer.code
