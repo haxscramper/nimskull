@@ -64,13 +64,17 @@ type
 
   DefTree* = ref object
     defName*: DefName
-    comment*: string
+    comment*: string ## Documentation comment for a declaration. Note that
+    ## documentation for the procedures in stored in the separate
+    ## `procDocs` field due `runnableExamples` and multiple comments, which
+    ## might be interleaved with each other.
     defNode: PNode
 
     case kind*: DefTreeKind
       of deftProc:
         arguments*: seq[DefTree]
         returnType*: PNode
+        procDocs*: seq[PNode]
 
       of deftIdentKinds:
         typ*: PNode
@@ -287,7 +291,7 @@ proc unparseType*(node: PNode): DefTree =
 
     of nkEnumTy:
       result = newDef(deftEnum, unparseName(node[0]), node)
-      result.comment = node.comment
+      result.comment = body.comment
       for field in body[1..^1]:
         if field.kind in {nkIdent, nkPrefix}:
           result.enumFields.add newDef(
@@ -296,14 +300,18 @@ proc unparseType*(node: PNode): DefTree =
         else:
           result.enumFields.add unparseDefs(field)
 
+        result.enumFields[^1].comment = field.comment
+
     of nkDistinctTy:
       result = newDef(deftAlias, unparseName(node[0]), node)
       result.isDistinct = true
       result.baseType = body[0]
+      result.comment = node.comment
 
     of nkInfix, nkProcTy, nkSym, nkIdent, nkBracketExpr, nkTupleTy:
       result = newDef(deftAlias, unparseName(node[0]), node)
       result.baseType = body
+      result.comment = node.comment
 
     of nkEmpty:
       assert node[0].kind in {nkPragmaExpr}, $treeRepr(nil, node)
@@ -314,6 +322,40 @@ proc unparseType*(node: PNode): DefTree =
       echo ">>>> node"
       failNode node
 
+proc isDocumentationNode*(n: PNode): bool =
+  ## Check if node is a 'documentation' - either `CommentStmt` or
+  ## `runnableExample` call.
+  return n.kind == nkCommentStmt or (
+    n.kind in nkCallKinds and
+    n[0].kind in {nkSym, nkIdent} and
+    n[0].getSName() == "runnableExamples"
+  )
+
+proc getRecComment*(n: PNode): seq[PNode] =
+  ## Recursively travese through the procedure documentation, adding
+  ## comment statements and runnable examples to a list.
+
+  proc aux(n: PNode): seq[PNode] =
+    if n == nil: return
+    # adding runnable examples or documentation comments to the list
+    if isDocumentationNode(n):
+      result.add n
+
+    if n.kind in {
+      nkStmtList, nkStmtListExpr, nkTypeDef, nkConstDef,
+      nkObjectTy, nkRefTy, nkPtrTy, nkAsgn, nkFastAsgn, nkHiddenStdConv
+    }:
+      for i in 0..<n.len:
+        result.add aux(n[i])
+
+  if n.kind in {
+    nkProcDef, nkFuncDef, nkMethodDef, nkIteratorDef,
+    nkMacroDef, nkTemplateDef, nkConverterDef
+  }:
+    result = aux(n[bodyPos])
+
+  else:
+    result = aux(n)
 
 proc unparseProcDef*(node: PNode): DefTree =
   result = newDef(deftProc, unparseName(node[0]), node)
@@ -325,6 +367,9 @@ proc unparseProcDef*(node: PNode): DefTree =
 
   for arg in node[paramsPos][1..^1]:
     result.arguments.add unparseIdentDefs(arg)
+
+  result.procDocs = getRecComment(node)
+
 
 proc unparseDefs*(node: PNode): seq[DefTree] =
   case node.kind:

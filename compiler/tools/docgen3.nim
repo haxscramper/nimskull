@@ -35,7 +35,8 @@ import
     hashes,
     strutils,
     intsets,
-    strformat
+    strformat,
+    sequtils
   ]
 
 import std/options as std_options
@@ -61,14 +62,20 @@ iterator visitWhen(visitor: DocVisitor, node: PNode): (DocVisitor, PNode) =
   for branch in node:
     var visitor = visitor
     if branch.kind == nkElifBranch:
-       visitor.declContext.whenConditions.add branch[0]
-       conditions.add branch[0]
-       yield (visitor, branch[1])
-    else:
-       # TODO construct inverted condition from all branches seen earlier,
-       # add it as 'when condition' for the context.
-       yield (visitor, branch[0])
+      # defensive tree copy here in order to avoid sem modifying the data
+      # later on
+      let cp = branch[0].copyTree()
+      visitor.declContext.whenConditions.add cp
+      conditions.add cp
+      yield (visitor, branch[1])
 
+    else:
+      # TODO construct inverted condition from all branches seen earlier,
+      # add it as 'when condition' for the context.
+      yield (visitor, branch[0])
+
+proc initDocPart*(example: PNode): DocTextPart =
+  discard
 
 proc registerPreUses(
     conf: ConfigRef,
@@ -123,6 +130,20 @@ proc newDocEntry(
   ): DocEntryId =
 
   db.newDocEntry(visitor.docUser, kind, name, visitor.declContext)
+
+proc newDocEntry(
+    db: var DocDb,
+    visitor: DocVisitor,
+    parent: DocEntryId,
+    kind: DocEntryKind,
+    name: string
+  ): DocEntryId =
+
+  db.newDocEntry(
+    kind = kind,
+    name = name,
+    parent = parent,
+    context = visitor.declContext)
 
 
 proc getEntryName(node: PNode): DefName =
@@ -181,6 +202,29 @@ proc getDeprecated(name: DefName): Option[string] =
     else:
       return some depr[1].getSName()
 
+proc updateCommon(entry: var DocEntry, decl: DefTree) =
+  ## Update common fields from the unparsed definition tree
+  entry.deprecatedMsg = getDeprecated(decl.name)
+  entry.location = some decl.nameNode().info
+  if decl.kind == deftProc:
+    for doc in decl.procDocs:
+      entry.docText.parts.add:
+        if doc.kind == nkCommentStmt:
+          initDocPart(doc.comment)
+
+        else:
+          initDocPart(doc)
+
+  else:
+    entry.docText = initDocText(decl.comment)
+
+  if decl.hasSym():
+    entry.sym = decl.sym
+
+  if decl.exported:
+    entry.visibility = dvkPublic
+
+
 proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntryId =
   ## Register new procedure definition in the documentation database,
   ## return constructed entry
@@ -213,6 +257,18 @@ proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntry
 
   db[result].procKind = pkind
 
+  for argument in def.arguments:
+    let arg = db.newDocEntry(
+      visitor = visitor,
+      parent = result,
+      kind = ndkArg,
+      name = argument.getSName()
+    )
+
+    db[arg].updateCommon(argument)
+    db[arg].argType = argument.typ
+    db[arg].argDefault = argument.initExpr
+
 proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntryId =
   case decl.kind:
     of deftObject:
@@ -221,45 +277,81 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
         db.classifyDeclKind(decl),
         decl.getSName())
 
-      when false:
-        if objectDecl.base.isSome():
-          entry.superTypes.add ctx[objectDecl.base.get()]
+      let objId = result
+      var db = addr db
+      # "'db' is of type <var DocDb> which cannot be captured as it would
+      # violate memory safety". Yes, the `db` is a `ref` type, but I still
+      # get this error, so I'm using pointer hack here.
 
-        for param in objectDecl.name.genParams:
-          var p = entry.newDocEntry(dekParam, param.head)
+      proc auxField(field: DefField): DocEntryId =
+        let head = field.head
+        result = db[].newDocEntry(
+          visitor = visitor,
+          parent = objId,
+          kind = ndkField,
+          name = head.getSName()
+        )
 
-        for nimField in iterateFields(objectDecl):
-          var field = entry.newDocEntry(dekField, nimField.name)
-          field.docText.rawDoc.add nimField.docComment
-          field.docText.docBody = ctx.convertComment(
-            nimField.docComment, nimField.declNode.get())
+        db[][result].updateCommon(head)
+        db[][result].fieldType = head.typ
 
-          if nimField.declNode.get().isExported():
-            field.visibility = dvkPublic
+      proc auxField(field: DefField, visitor: DocVisitor): seq[DocEntryId] =
+        case field.kind:
+          of deffWrapCase:
+            let resField = auxField(field)
+            for branch in field.branches:
+              db[][resField].switchesInto.add((branch.branchExprs, @[]))
+              for subfield in branch.subfields:
+                # `when` might have nore than one nested field returned
+                # from aux, all other cases are covered by `subfields`
+                # iteration above.
+                for subId in auxField(subfield, visitor):
+                  db[][resField].switchesInto[^1].subfields.add subId
 
-          with field:
-            identType = some ctx.toDocType(nimField.fldType)
-            identTypeStr = some $nimField.fldType
+            # `case` only yields a single toplevel field
+            result.add resField
 
-          ctx.setLocation(field, nimField.declNode.get())
-          ctx.addSigmap(nimField.declNode.get(), field)
+          of deffWrapWhen:
+            # 'wrap when' does not have a direct field declared, instead
+            # return all the nested fields directly
+            for branch in field.branches:
+              var visitor = visitor
+              if branch.branchExprs.len > 0:
+                visitor.declContext.whenConditions.add branch.branchExprs[0]
+
+              for subfield in branch.subfields:
+                result.add auxField(subfield, visitor)
+
+          of deffPlain:
+            result.add auxField(field)
+
+      for field in decl.objFields:
+        discard auxField(field, visitor)
+
 
     of deftEnum:
       result = db.newDocEntry(visitor, ndkEnum, decl.getSName())
+      # Calling 'updateCommon' can be done multiple times, and here we need
+      # it in order to get correct visibility annotations on the enum
+      # fields.
+      updateCommon(db[result], decl)
 
-      when false:
-        ctx.setLocation(entry, node)
-        entry.docText.docBody = ctx.convertComment(enumDecl.docComment, node)
+      for field in decl.enumFields:
+        let fId = db.newDocEntry(
+          visitor = visitor,
+          parent = result,
+          kind = ndkEnumField,
+          name = field.getSName()
+        )
 
-        for enField in enumDecl.values:
-          var field = entry.newDocEntry(dekEnumField, enField.name)
-          field.visibility = entry.visibility
-          # info enField.docComment
-          field.docText.docBody = ctx.convertComment(
-            enField.docComment, enField.declNode.get())
-          ctx.setLocation(field, enField.declNode.get())
-          ctx.addSigmap(enField.declNode.get(), field)
+        db[fId].updateCommon(field)
+        db[fId].visibility = db[result].visibility
 
+        if not field.strOverride.isNil():
+          db[fId].enumStringOverride = some field.strOverride.getSName()
+
+        if not field.valOverride.isNil():
+          db[fId].enumValueOverride = some field.valOverride
 
     of deftAlias:
       result = db.newDocEntry(
@@ -270,30 +362,12 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
 
       db[result].baseType = decl.baseType
 
-      when false:
-        for param in parseNType(node[0]).genParams:
-          var p = entry.newDocEntry(dekParam, param.head)
-
     of deftMagic:
       result = db.newDocEntry(
         visitor, ndkBuiltin, decl.getSName())
 
     else:
       assert false, $decl.kind
-
-
-
-
-
-proc updateCommon(entry: var DocEntry, decl: DefTree) =
-  entry.deprecatedMsg = getDeprecated(decl.name)
-  entry.location = some decl.nameNode().info
-  entry.docText.text = decl.comment
-  if decl.hasSym():
-    entry.sym = decl.sym
-
-  if decl.exported:
-    entry.visibility = dvkPublic
 
 proc registerDeclSection(
     db: var DocDb,
@@ -367,6 +441,27 @@ proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
     else:
       discard
 
+proc registerTopLevelDoc(
+    db: var DocDb, module: DocEntryId, node: PNode, inModuleBody: bool)  =
+  ## Register toplevel documentation block, either adding it as a part of
+  ## documentation comment for the toplevel module (if not `inModuleBody`),
+  ## or as a standalone toplevel documentation.
+  if inModuleBody:
+    let doc = db.newDocEntry(
+      parent = module,
+      kind = ndkComment,
+      name = ""
+    )
+
+    db[doc].location = some node.info
+
+  else:
+    db[module].docText.parts.add:
+      if node.kind == nkCommentStmt:
+        initDocPart(node.comment)
+
+      else:
+        initDocPart(node)
 
 func expandCtx(ctx: DocContext): int =
   ctx.expansionStack.len
@@ -529,15 +624,32 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
         visitor.docUser = ctx.docModule
 
         assert not ctx.db.isNil()
-        # Register toplevel declaration entries generated in the code,
-        # excluding ones that were generated as a result of macro
-        # expansions.
-        registerTopLevel(ctx.db, visitor, result)
 
-        # Register immediate uses of the macro expansions
-        var state = initRegisterState()
-        state.moduleId = ctx.docModule
-        ctx.registerUses(result, state)
+        if isDocumentationNode(n):
+          # Registering toplevel documentation elements for module only in
+          # the post-sem analysis, since documentation is not subject to
+          # conditional compile-time hiding (supposedly. And if it is then
+          # it most likely is the author's intention. Althoug this
+          # assumption can certainly be revised later on).
+          registerTopLevelDoc(
+            ctx.db, ctx.docModule, n, ctx.inModuleBody)
+
+        elif n.kind == nkDiscardStmt:
+          # Ignoring toplevel discard statements - the can be used as an
+          # old-style comments, or be a testament spec (test files can also
+          # have toplevel documentation)
+          discard
+
+        else:
+          # Register toplevel declaration entries generated in the code,
+          # excluding ones that were generated as a result of macro
+          # expansions.
+          registerTopLevel(ctx.db, visitor, result)
+          ctx.inModuleBody = false
+          # Register immediate uses of the macro expansions
+          var state = initRegisterState()
+          state.moduleId = ctx.docModule
+          ctx.registerUses(result, state)
     ),
     TPassClose(
       proc(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
@@ -559,7 +671,29 @@ proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
     var r: string
     template e(): untyped = db[id]
 
-    r.add &"[{id.int}]: {e().visibility} {e().kind} '{e().name}'"
+    r.add &"[{id.int}]: {e().visibility} {e().kind} '{e().name}"
+    case entry.kind:
+      of ndkProcKinds:
+        r.add "("
+        for idx, arg in entry.nested:
+          if 0 < idx: r.add ", "
+          r.add db[arg].name
+          r.add ": "
+          r.add $db[arg].argType
+
+        r.add ")"
+
+      of ndkField:
+        r.add ": "
+        r.add $entry.fieldType
+
+      else:
+        discard
+
+    r.add "'"
+
+    if e().parent.isSome():
+      r.add &" parent [{e().parent.get.int}]"
 
     if e().location.isSome():
       r.add " in "
@@ -568,6 +702,13 @@ proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
     if e().context.preSem:
       r.add " (presem)"
 
+    if e().context.whenConditions.len > 0:
+      let conds = e().context.whenConditions.mapIt(
+        "(" & $it & ")").join(" and ")
+
+      r.add " available when "
+      r.add conds
+
     if e().deprecatedMsg.isSome():
       r.add " deprecated"
       if e().deprecatedMsg.get().len > 0:
@@ -575,9 +716,11 @@ proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
         r.add e().deprecatedMsg.get()
         r.add "'"
 
-    if e().docText.text.len > 0:
+    if e().docText.parts.len > 0:
       r.add " doc: '"
-      r.add e().docText.text.replace("\n", "\\n")
+      for part in e().docText.parts:
+        r.add part.text.replace("\n", "\\n")
+
       r.add "'"
 
     res.writeLine(r)
@@ -658,8 +801,7 @@ proc writeJsonLines*(conf: ConfigRef, db: DocDb) =
       "name": entry.name,
       "id": id.int,
       "kind": $entry.kind,
-      "visibility": $entry.visibility,
-      "doc": entry.docText.text
+      "visibility": $entry.visibility
     }
 
     if entry.deprecatedMsg.isSome():

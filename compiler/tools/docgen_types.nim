@@ -62,6 +62,15 @@ type
     ndkEnumField = "enumfield" ## Enum field/constant
     # end
 
+    # merging all toplevel documentation elemetns into parent module is a
+    # wrong approach, because we are loosing the ordering provided by the
+    # programmer, and won't be able to recover it later on without
+    # implementing annoying location-dependent ordering hacks.
+    ndkComment = "comment" ## Toplevel documentation comment that is not
+    ## directly attached to any entry (first 'comment' entries in the
+    ## module are attached to said module, but it is also possible to place
+    ## ones in the middle of the module - those will go into nested comment
+    ## entries)
     ndkModule = "module" ## Module (C header file, nim/python/etc. module)
     ndkFile = "file" ## Global or local file
     ndkPackage = "package" ## System or programming language package
@@ -253,8 +262,22 @@ type
     start*: TLineInfo
     finish*: TLineInfo
 
-  DocText* = object
+  DocTextPart* = object
+    ## Single chunk of documentation text, can be either source code, or
+    ## runnable examples.
     text*: string
+    case isRunnable*: bool
+      of true:
+        implicitModule*: DocEntryId ## Current module id, implicitly
+        ## available in the runnable examples execution environment.
+
+      of false:
+        discard
+
+  DocText* = object
+    ## Full documentation text for an entry, might consist of several parts
+    ## - text blocks or runnable examples.
+    parts*: seq[DocTextPart]
 
   DocVisibilityKind* = enum
     dvkPrivate = "private" ## Not exported
@@ -296,6 +319,7 @@ type
     ## more nested fields), arguments of a procedure, enum values and so on.
     ## Module has all elements declared in it listed here, project has a list of
     ## modules
+    parent*: Option[DocEntryId] ## Parent declaration entry
     name*: string ## Original identifier name, not disambiguated, without any
     ## extra information about owner/type/generic parameters and so on.
     visibility*: DocVisibilityKind ## Entry visibility from the
@@ -322,11 +346,19 @@ type
       of ndkStructKinds:
         superTypes*: seq[DocEntryId]
 
-      of ndkArg, ndkField:
-        identTypeStr*: Option[string]
-        identType*: Option[PType] ## Argument type description
-        identDefault*: Option[PNode] ## Expression for argument default
-        ## value.
+      of ndkEnumField:
+        enumValueOverride*: Option[PNode]
+        enumStringOverride*: Option[string]
+
+      of ndkArg:
+        argType*: PNode ## Argument type description
+        argDefault*: PNode ## Expression for argument default value.
+
+      of ndkField:
+        fieldType*: PNode
+        switchesInto*: seq[tuple[
+          expr: seq[PNode], subfields: seq[DocEntryId]]] ## Identifiers for
+        ## nested fields that can be accessed based on this field's value
 
       of ndkAliasKinds:
         baseType*: PNode ## Base type /expression/ of the alias. Might contain
@@ -377,7 +409,6 @@ type
     ## Initial documntation analysis context that constructs a list of potential
     ## documentable entries using pre-sem visitation.
     db*: DocDb
-
     graph*: ModuleGraph
     docModule*: DocEntryId ## Toplevel entry - module currently being
     ## processed
@@ -391,6 +422,7 @@ type
     docModule*: DocEntryId ## Toplevel entry - module currently being
     ## processed
 
+    inModuleBody*: bool
     # Fields to track expansion context
     activeExpansion*: ExpansionId ## Id of the current active expansion.
     ## Points to valid one only if the expansion stack is not empty,
@@ -439,9 +471,9 @@ func incl*(s: var DocEntrySet, entry: DocEntry) =
   s.incl entry
 
 proc getSub*(db: DocDb, parent: DocEntryId, subName: string): DocEntryId =
+  ## Get nested entry by name. Might return empty doc entry id if name is
+  ## not found.
   for sub in db[parent].nested:
-    echo "nested ", sub
-    echo "trying sub name ", db[sub].name
     if db[sub].name == subName:
       return sub
 
@@ -458,7 +490,8 @@ proc newDocEntry*(
     context: DocDeclarationContext = DocDeclarationContext()
   ): DocEntryId =
   ## Create new nested document entry. Add it to subnode of `parent` node.
-  result = db.add DocEntry(name: name, kind: kind, context: context)
+  result = db.add DocEntry(
+    name: name, kind: kind, context: context, parent: some parent)
   db[parent].nested.add result
 
 proc getOrNewNamed*(
@@ -485,3 +518,8 @@ proc getExpansion*(db: DocDb, node: PNode): ExpansionId =
 func `$`*(slice: DocCodeLocation): string =
   &"{slice.file.int}/{slice.line}:{slice.column.a}..{slice.column.b}"
 
+func initDocPart*(str: string): DocTextPart =
+  DocTextPart(text: str, isRunnable: false)
+
+func initDocText*(str: string): DocText =
+  DocText(parts: @[initDocPart(str)])
