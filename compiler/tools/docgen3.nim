@@ -48,6 +48,7 @@ static:
 
 type
   DocVisitor = object
+    parent: Option[DocEntryId]
     docUser: DocEntryId ## Active toplevel user
     declContext: DocDeclarationContext ## Active documentation declaration
     ## context that will be passed to new documentable entry on construction.
@@ -126,7 +127,15 @@ proc newDocEntry(
     name: string
   ): DocEntryId =
 
-  db.newDocEntry(visitor.docUser, kind, name, visitor.declContext)
+  if visitor.parent.isSome():
+    db.newDocEntry(
+      kind = kind,
+      name = name,
+      parent = visitor.parent.get(),
+      context = visitor.declContext)
+
+  else:
+    db.newDocEntry(visitor.docUser, kind, name, visitor.declContext)
 
 proc newDocEntry(
     db: var DocDb,
@@ -538,6 +547,43 @@ type
     ## for the semantic pass.
     db: DocDb
 
+let preSemPass = makePass(
+  TPassOpen(
+    proc(
+      graph: ModuleGraph, module: PSym, idgen: IdGenerator
+    ): PPassContext {.nimcall.} =
+      var db = DocBackend(graph.backend).db
+      return DocPreContext(
+        graph: graph,
+        db: db,
+        docModule: db.newDocEntry(ndkModule, module.name.s)
+      )
+  ),
+  TPassProcess(
+    proc(c: PPassContext, n: PNode): PNode {.nimcall.} =
+      var ctx = DocPreContext(c)
+      assert not ctx.db.isNil()
+      var visitor = DocVisitor()
+      visitor.docUser = ctx.docModule
+      visitor.parent = some ctx.docModule
+      visitor.declContext.preSem = true
+
+      # Perform initial registration of all the entries in the code -
+      # this one excludes all macro-generated ones, but includes
+      # conditionally enabled elements.
+      registerTopLevel(ctx.db, visitor, n)
+
+      registerPreUses(ctx.graph.config, ctx.db, visitor, n)
+
+      result = n
+  ),
+  TPassClose(
+    proc(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
+      # Pre-sem documenter does not have any special 'close' actions for now
+      discard
+  ),
+  isFrontend = true)
+
 proc setupDocPasses(graph: ModuleGraph): DocDb =
   ## Setup necessary documentation pass context for module graph.
   # Persistent data storage for all documentable entries. The data persists
@@ -546,41 +592,8 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
 
   graph.backend = back
 
-  registerPass(graph, makePass(
-    TPassOpen(
-      proc(
-        graph: ModuleGraph, module: PSym, idgen: IdGenerator
-      ): PPassContext {.nimcall.} =
-        var db = DocBackend(graph.backend).db
-        return DocPreContext(
-          graph: graph,
-          db: db,
-          docModule: db.newDocEntry(ndkModule, module.name.s)
-        )
-    ),
-    TPassProcess(
-      proc(c: PPassContext, n: PNode): PNode {.nimcall.} =
-        var ctx = DocPreContext(c)
-        assert not ctx.db.isNil()
-        var visitor = DocVisitor()
-        visitor.docUser = ctx.docModule
-        visitor.declContext.preSem = true
-
-        # Perform initial registration of all the entries in the code -
-        # this one excludes all macro-generated ones, but includes
-        # conditionally enabled elements.
-        registerTopLevel(ctx.db, visitor, n)
-
-        registerPreUses(ctx.graph.config, ctx.db, visitor, n)
-
-        result = n
-    ),
-    TPassClose(
-      proc(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
-        # Pre-sem documenter does not have any special 'close' actions for now
-        discard
-    ),
-    isFrontend = true))
+  if false:
+    registerPass(graph, preSemPass)
 
   # Documentation pass /extends/ the semantic pass, so we are adding it directly
   # after 'pre-sem'
@@ -619,6 +632,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
         var visitor = DocVisitor()
 
         visitor.docUser = ctx.docModule
+        visitor.parent = some ctx.docModule
 
         assert not ctx.db.isNil()
 
@@ -823,17 +837,18 @@ proc commandDoc3*(graph: ModuleGraph, ext: string) =
   compileProject(graph)
   echo "Compiled documentation generator project"
 
-  graph.config.writeFlatDump(db)
-  echo "wrote list of tags to the /tmp/res_dump"
+  if false:
+    graph.config.writeFlatDump(db)
+    echo "wrote list of tags to the /tmp/res_dump"
 
-  graph.config.writeEtags(db)
-  echo "wrote etags to the /tmp/etags"
+    graph.config.writeEtags(db)
+    echo "wrote etags to the /tmp/etags"
 
-  graph.config.writeJsonLines(db)
-  echo "wrote json to the /tmp/jtags"
+    graph.config.writeJsonLines(db)
+    echo "wrote json to the /tmp/jtags"
 
-  graph.config.writeSqlite(db, AbsoluteFile"/tmp/docdb.sqlite")
-  echo "wrote sqlite db to /tmp/docdb.sqlite"
+    graph.config.writeSqlite(db, AbsoluteFile"/tmp/docdb.sqlite")
+    echo "wrote sqlite db to /tmp/docdb.sqlite"
 
   graph.config.writeSourcetrail(db, AbsoluteFile"/tmp/docdb.srctrldb")
   echo "wrote sourcetral db to /tmp/docdb.srctrldb"

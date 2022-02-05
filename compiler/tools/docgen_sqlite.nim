@@ -122,6 +122,13 @@ const
   sqPrimary = " PRIMARY KEY UNIQUE NOT NULL"
   sqNNil = " NOT NULL"
 
+
+template withPrepared(conn: DbConn, prepCode: SqlPrepared, body: untyped): untyped =
+  block:
+    var prep {.inject.} = prepCode
+    body
+    finalize(prep)
+
 template withPrepared(
     conn: DbConn, prepCode: string,
     prepName: untyped,
@@ -134,7 +141,6 @@ template withPrepared(
     finalize(prepName)
 
 template withPrepared(conn: DbConn, prepCode: string, body: untyped): untyped =
-
   withPrepared(conn, prepCode, prep, body)
 
 
@@ -241,9 +247,8 @@ type
     strailSymPackage = 14
     strailSymStruct = 15
     strailSymTypedef = 16
-    strailSymType_parameter = 17
+    strailSymTypeParameter = 17
     strailSymUnion = 18
-    strailSymKindMax = 19
 
   TrailRelation = enum
     strailRelUndefined = 0
@@ -263,6 +268,32 @@ type
     trailDefNone
     trailDefImplicit
     trailDefExplicit
+
+  TrailNode = enum
+    nodeSymbol = 1 shl 0
+    nodeType = 1 shl 1
+    nodeBuiltinType = 1 shl 2
+
+    nodeModule = 1 shl 3
+    nodeNamespace = 1 shl 4
+    nodePackage = 1 shl 5
+    nodeStruct = 1 shl 6
+    nodeClass = 1 shl 7
+    nodeInterface = 1 shl 8
+    nodeAnnotation = 1 shl 9
+    nodeGlobalVariable = 1 shl 10
+    nodeField = 1 shl 11
+    nodeFunction = 1 shl 12
+    nodeMethod = 1 shl 13
+    nodeEnum = 1 shl 14
+    nodeEnumConstant = 1 shl 15
+    nodeTypedef = 1 shl 16
+    nodeTypeParameter = 1 shl 17
+
+    nodeFile = 1 shl 18
+    nodeMacro = 1 shl 19
+    nodeUnion = 1 shl 20
+
 
 func toStrail(kind: DocEntryKind): TrailSymbol =
   case kind:
@@ -299,9 +330,56 @@ func toStrail(kind: DocEntryKind): TrailSymbol =
     of ndkPackage:   strailSymPackage
     of ndkMethod:    strailSymMethod
 
+func toStrailNode(kind: DocEntryKind): TrailNode =
+  case toStrail(kind):
+    of strailSymMethod: nodeMethod
+    of strailSymPackage: nodePackage
+    of strailSymModule: nodeModule
+    of strailSymField: nodeField
+    of strailSymAnnotation: nodeAnnotation
+    of strailSymBuiltinType: nodeBuiltinType
+    of strailSymClass: nodeClass
+    of strailSymEnum: nodeEnum
+    of strailSymEnumConstant: nodeEnumConstant
+    of strailSymFunction: nodeFunction
+    of strailSymGlobalVariable: nodeGlobalVariable
+    of strailSymInterface: nodeInterface
+    of strailSymMacro: nodeMacro
+    of strailSymNamespace: nodeNamespace
+    of strailSymStruct: nodeStruct
+    of strailSymTypedef: nodeTypedef
+    of strailSymTypeParameter: nodeTypeParameter
+    of strailSymUnion: nodeUnion
 
-func toStrail(kind: DocOccurKind): TrailSymbol =
-  discard
+
+func toStrail(kind: DocOccurKind): TrailRelation =
+  case kind:
+     of dokTypeAsArgUse, dokTypeAsReturnUse, dokTypeAsFieldUse:
+       strailRelTypeUsage
+
+     of dokExpansion, dokDefineCheck:
+       strailRelMacroUsage
+
+     of dokAnnotationUsage:
+       strailRelAnnotationUsage
+
+     of dokImported:
+       strailRelImport
+
+     of dokInheritFrom:
+       strailRelInheritance
+
+     of dokCall:
+       strailRelCall
+
+     of dokIncluded:
+       strailRelInclude
+
+     of dokEnumFieldUse, dokGlobalRead, dokGlobalWrite, dokFieldUse, dokFieldSet:
+       strailRelUsage
+
+     else:
+       strailRelUndefined
 
 const settings = """
 <?xml version="1.0" encoding="utf-8" ?>
@@ -375,6 +453,19 @@ FOREIGN KEY(id) REFERENCES node(id) ON DELETE CASCADE
 
       conn.doExec(prep)
 
+  var insertEdge = conn.prepare conn.newTableWithInsert("edge", {
+    ("id", 1): sq(int) & sqNNil,
+    ("type", 2): sq(int) & sqNNil,
+    ("source_node_id", 3): sq(int) & sqNNil,
+    ("target_node_id", 4): sq(int) & sqNNil,
+  }, extra = """
+PRIMARY KEY(id),
+FOREIGN KEY(id) REFERENCES element(id) ON DELETE CASCADE,
+FOREIGN KEY(source_node_id) REFERENCES node(id) ON DELETE CASCADE,
+FOREIGN KEY(target_node_id) REFERENCES node(id) ON DELETE CASCADE
+""")
+
+  var pathOffset = 0
   withPrepared(conn, conn.newTableWithInsert("node", {
     ("id", 1): sq(int) & sqNNil,
     ("type", 2): sq(int) & sqNNil,
@@ -385,8 +476,6 @@ FOREIGN KEY(id) REFERENCES element(id) ON DELETE CASCADE
 """)):
     for id, entry in db.entries:
       if entry.kind notin {ndkParam, ndkArg, ndkInject, ndkComment, ndkFile}:
-        prep.bindParam(1, id)
-        prep.bindParam(2, entry.kind)
 
         var name: string
 
@@ -396,13 +485,26 @@ FOREIGN KEY(id) REFERENCES element(id) ON DELETE CASCADE
           partDelimiter = "\ts"
           signatureDelimiter = "\tp"
 
-        var path: seq[DocEntryId] = @[id]
+        var path: seq[DocEntryId]
         var top = id
         while db[top].parent.isSome():
           path.add top
           top = db[top].parent.get()
 
+        path.add top
+
         reverse(path)
+        for idx, part in path:
+          if 0 < idx:
+            with insertEdge:
+              bindParam(1, pathOffset)
+              bindParam(2, strailRelAnnotationUsage)
+              bindParam(3, path[idx - 1])
+              bindParam(4, path[idx])
+
+            inc pathOffset
+
+            conn.doExec(insertEdge)
 
         name.add "::" # Name delimiter
         name.add metaDelimiter
@@ -427,26 +529,16 @@ FOREIGN KEY(id) REFERENCES element(id) ON DELETE CASCADE
 
           name.add signatureDelimiter
 
+        prep.bindParam(1, id)
+        prep.bindParam(2, entry.kind.toStrailNode())
         prep.bindParam(3, name)
-
-
         conn.doExec(prep)
 
-  withPrepared(conn, conn.newTableWithInsert("edge", {
-    ("id", 1): sq(int) & sqNNil,
-    ("type", 2): sq(int) & sqNNil,
-    ("source_node_id", 3): sq(int) & sqNNil,
-    ("target_node_id", 4): sq(int) & sqNNil,
-  }, extra = """
-PRIMARY KEY(id),
-FOREIGN KEY(id) REFERENCES element(id) ON DELETE CASCADE,
-FOREIGN KEY(source_node_id) REFERENCES node(id) ON DELETE CASCADE,
-FOREIGN KEY(target_node_id) REFERENCES node(id) ON DELETE CASCADE
-""")):
+  withPrepared(conn, insertEdge):
     for id, occur in db.occurencies:
       if occur.kind notin dokLocalKinds and occur.user.isSome():
         with prep:
-          bindParam(1, id.int)
+          bindParam(1, id.int + pathOffset)
           bindParam(2, occur.kind.toStrail())
           bindParam(3, occur.user.get())
           bindParam(4, occur.refid)
@@ -540,6 +632,8 @@ FOREIGN KEY(file_node_id) REFERENCES node(id) ON DELETE CASCADE
           with prepOccur:
             bindParam(1, occur.refid)
             bindParam(2, id.int + declShift)
+
+          conn.doExec(prepOccur)
 
 
 #   for line in splitLines("""
