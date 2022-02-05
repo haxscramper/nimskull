@@ -95,6 +95,7 @@ const
     ndkObject, ndkDefect, ndkException, ndkEffect
   }
 
+  ndkNewtypeKinds* = { ndkObject .. ndkDistinctAlias }
   ndkProcKinds* = { ndkProc .. ndkConverter }
   ndkAliasKinds* = { ndkTypeclass, ndkAlias, ndkDistinctAlias }
 
@@ -291,7 +292,8 @@ type
 
 type
   DocDeclarationContext* = object
-    preSem*: bool
+    preSem*: bool ## Whether documentation entry was registered before
+                  ## semantic pass or after.
     ## Active context of the documentable entry declarations
     whenConditions*: seq[PNode] ## List of nested 'when' statements that were
     ## encountered during recursive visitation.

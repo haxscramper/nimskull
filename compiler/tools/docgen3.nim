@@ -9,11 +9,7 @@ import
     msgs
   ],
   ast/[
-    astalgo,
     ast,
-    trees,
-    types,
-    wordrecg,
     renderer,
     lineinfos
   ],
@@ -23,18 +19,19 @@ import
   ],
   utils/[
     astrepr,
-    debugutils
+    debugutils,
+    pathutils
   ],
   ./docgen_types,
   ./docgen_file_tracking,
   ./docgen_use_registration,
   ./docgen_unparser,
   ./docgen_ast_aux,
+  ./docgen_sqlite,
   std/[
     tables,
     hashes,
     strutils,
-    intsets,
     strformat,
     sequtils
   ]
@@ -820,90 +817,6 @@ proc writeJsonLines*(conf: ConfigRef, db: DocDb) =
 
   close(jfile)
 
-import std/db_sqlite
-
-proc writeSqlite*(conf: ConfigRef, db: DocDb)  =
-  var sq = open("/tmp/docdb.sqlite", "", "", "")
-  sq.exec(sql"drop table if exists files")
-  sq.exec(sql"create table files (id integer primary key, abs text);")
-
-  for idx, file in conf.m.fileInfos:
-    sq.exec(
-      sql"insert into files (id, abs) values (?, ?)",
-      idx,
-      file.fullPath.string
-    )
-
-  sq.exec(sql"drop table if exists entries")
-  sq.exec(sql"""create table entries (
-id integer primary key,
-name text,
-kind integer,
-decl_file integer,
-decl_line integer,
-decl_col integer
-) """)
-
-  for id, entry in db.entries:
-    let loc = entry.location
-    sq.exec(
-      sql"insert into entries (id, name, kind, decl_file, decl_line, decl_col) values (?, ?, ?, ?, ?, ?)",
-      id.int,
-      entry.name,
-      entry.kind.int,
-      tern(loc.isSome(), loc.get().fileIndex.int, 0),
-      tern(loc.isSome(), loc.get().line.int, 0),
-      tern(loc.isSome(), loc.get().col.int, 0)
-    )
-
-  sq.exec(sql"drop table if exists occurencies")
-  sq.exec(sql"""create table occurencies (
-id integer primary key,
-kind integer,
-occur_of integer,
-loc_file integer,
-loc_line integer,
-loc_col_start integer,
-loc_col_end integer,
-foreign key (occur_of) references entries (id)
-)
-""")
-
-  for id, occur in db.occurencies:
-    if occur.kind notin dokLocalKinds:
-      let s = occur.slice
-
-      sq.exec(
-        sql(
-          "insert into occurencies " &
-            "(id, kind, occur_of, loc_file, loc_line, loc_col_start, loc_col_end) values " &
-            "(?, ?, ?, ?, ?, ?, ?)"
-        ),
-        id.int,
-        occur.kind.int,
-        occur.refid.int,
-        s.file.int,
-        s.line,
-        s.column.a,
-        s.column.b
-      )
-
-  proc kindTable[E: enum](e: typedesc[E]) =
-    let table = $E
-    sq.exec(sql(&"drop table if exists {table}"))
-    sq.exec(sql(&"create table {table} (idx int, name text)"))
-    for item in low(E) .. high(E):
-      sq.exec(
-        sql(&"insert into {table} (idx, name) values (?, ?)"),
-        item.int,
-        $item
-      )
-
-  kindTable(DocEntryKind)
-  kindTable(DocOccurKind)
-
-  sq.close()
-
 proc commandDoc3*(graph: ModuleGraph, ext: string) =
   ## Execute documentation generation command for module graph
   let db = setupDocPasses(graph)
@@ -919,5 +832,8 @@ proc commandDoc3*(graph: ModuleGraph, ext: string) =
   graph.config.writeJsonLines(db)
   echo "wrote json to the /tmp/jtags"
 
-  graph.config.writeSqlite(db)
-  echo "wrote sqlite config to /tmp/docdb.sqlite"
+  graph.config.writeSqlite(db, AbsoluteFile"/tmp/docdb.sqlite")
+  echo "wrote sqlite db to /tmp/docdb.sqlite"
+
+  graph.config.writeSourcetrail(db, AbsoluteFile"/tmp/docdb.srctrldb")
+  echo "wrote sourcetral db to /tmp/docdb.srctrldb"
