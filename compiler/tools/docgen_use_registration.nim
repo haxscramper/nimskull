@@ -12,17 +12,20 @@ import
     trees,
     wordrecg
   ],
+  front/[
+    options
+  ],
   utils/[
     debugutils,
     astrepr
   ],
   std/[
-    options,
     intsets,
     strutils,
     tables
   ]
 
+import std/options as std_options
 
 type
   RegisterStateKind = enum
@@ -282,11 +285,12 @@ proc registerSymbolUse(
         discard db.occur(node, dokEnumFieldUse, state.user)
 
     of skField:
-      if not node.sym.owner.isNil:
+      if not node.sym.owner.isNil():
         let id = ctx[node.sym.owner]
         if not id.isNil():
+          let field = db.getSub(id, $node)
           discard db.occur(
-            node, parent, id, dokFieldUse, state.user)
+            node, parent, field, dokFieldUse, state.user)
 
     of skProcDeclKinds:
       if state.top() == rskProcHeader:

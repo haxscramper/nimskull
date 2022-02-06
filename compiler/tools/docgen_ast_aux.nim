@@ -12,5 +12,7 @@ proc failNode*(node: PNode) {.
     noreturn
   .} =
 
-  echo treeRepr(nil, node, maxPath = 3)
+  var conf = implicitTReprConf
+  conf.maxPath = 3
+  echo treeRepr(nil, node, conf)
   assert false

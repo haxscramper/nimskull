@@ -528,18 +528,22 @@ func initDocPart*(str: string): DocTextPart =
 func initDocText*(str: string): DocText =
   DocText(parts: @[initDocPart(str)])
 
+proc procSignature*(db: DocDb, id: DocEntryId): string =
+  assert db[id].kind in ndkProcKinds
+  result.add "("
+  for idx, arg in db[id].nested:
+    if 0 < idx: result.add ", "
+    result.add db[arg].name
+    result.add ": "
+    result.add $db[arg].argType
+
+  result.add ")"
+
 proc fullName*(db: DocDb, id: DocEntryId): string =
   result.add db[id].name
   case db[id].kind:
     of ndkProcKinds:
-      result.add "("
-      for idx, arg in db[id].nested:
-        if 0 < idx: result.add ", "
-        result.add db[arg].name
-        result.add ": "
-        result.add $db[arg].argType
-
-      result.add ")"
+      result.add procSignature(db, id)
 
     of ndkField:
       result.add ": "

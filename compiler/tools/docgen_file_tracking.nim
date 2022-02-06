@@ -343,7 +343,7 @@ proc occur*(
     user: Option[DocEntryId] = none DocEntryId
   ): DocOccurId =
   ## Construct new docmentable entry occurence and return new ID
-  var occur = DocOccur(kind: kind, user: user, slice: nodeSlice(node))
+  var occur = DocOccur(kind: kind, user: user, slice: parent.subslice(node))
   occur.refid = id
   return db.add occur
 

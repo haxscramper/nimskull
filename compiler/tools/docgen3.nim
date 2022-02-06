@@ -787,12 +787,16 @@ proc commandDoc3*(graph: ModuleGraph, ext: string) =
     graph.config.writeJsonLines(db)
     echo "wrote json to the /tmp/jtags"
 
-  graph.config.writeSqlite(db, AbsoluteFile"/tmp/docdb.sqlite")
-  echo "wrote sqlite db to /tmp/docdb.sqlite"
+  block:
+    let outSql = graph.config.projectFull.changeFileExt("sqlite")
+    graph.config.writeSqlite(db, outSql)
+    echo "wrote sqlite db to ", outSql.string
 
-  let outTags = graph.config.projectFull.changeFileExt("etags")
-  graph.config.writeEtags(db, outTags)
-  echo "wrote etags to the ", outTags.string
+  block:
+    let outTags = graph.config.projectFull.changeFileExt("etags")
+    graph.config.writeEtags(db, outTags)
+    echo "wrote etags to the ", outTags.string
 
-  graph.config.writeSourcetrail(db, AbsoluteFile"/tmp/docdb.srctrldb")
-  echo "wrote sourcetral db to /tmp/docdb.srctrldb"
+  block:
+    graph.config.writeSourcetrail(db, AbsoluteFile"/tmp/docdb.srctrldb")
+    echo "wrote sourcetral db to /tmp/docdb.srctrldb"

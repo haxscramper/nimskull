@@ -522,6 +522,7 @@ FOREIGN KEY(target_node_id) REFERENCES node(id) ON DELETE CASCADE
 
   var pathOffset = 0
   withPrepared(conn, conn.newTableWithInsert("node", {
+    # Sourcetrail nodes map to indexed documentable entries
     ("id", 1): sq(int) & sqNNil,
     ("type", 2): sq(int) & sqNNil,
     ("serialized_name", 3): sq(string),
@@ -550,41 +551,16 @@ FOREIGN KEY(id) REFERENCES element(id) ON DELETE CASCADE
         path.add top
 
         reverse(path)
-        # for idx, part in path:
-        #   if 0 < idx:
-        #     with insertEdge:
-        #       bindParam(1, pathOffset)
-        #       bindParam(2, strailRelAnnotationUsage)
-        #       bindParam(3, path[idx - 1])
-        #       bindParam(4, path[idx])
-        #       bindParam(5, )
-
-        #     inc pathOffset
-
-        #     conn.doExec(insertEdge)
 
         name.add "::" # Name delimiter
-        name.add metaDelimiter
         for idx, part in path:
-          if 0 < idx:
-            name.add nameDelimiter
-
+          name.add tern(idx == 0, metaDelimiter, nameDelimiter)
           name.add db[part].name
           name.add partDelimiter
-
-          if db[part].kind in ndkProcKinds:
-            name.add "("
-            for idx, arg in entry.nested:
-              if 0 < idx:
-                name.add ", "
-
-              name.add db[arg].name
-              name.add ": "
-              name.add $db[arg].argType
-
-            name.add ")"
-
+          name.add ""
           name.add signatureDelimiter
+          if db[part].kind in ndkProcKinds:
+            name.add db.procSignature(part)
 
         prep.bindParam(1, id)
         prep.bindParam(2, entry.kind.toStrailNode())
@@ -657,34 +633,35 @@ FOREIGN KEY(id) REFERENCES node(id) ON DELETE CASCADE
       ("start_column", 4): sq(int),
       ("end_line", 5): sq(int),
       ("end_column", 6): sq(int),
-      ("type", 7): sq(int)
+      ("type", 7): sq(int),
+      ("debug", 8): sq(string)
     }, extra = """
 PRIMARY KEY(id),
 FOREIGN KEY(file_node_id) REFERENCES node(id) ON DELETE CASCADE
 """), prepLocation):
       # Occurence source location information is stored together with
       # declaration location, so offsetting the indices.
-      let declShift = len(db.occurencies)
 
       for id, occur in db.occurencies:
         if occur.kind notin dokLocalKinds:
           let s = occur.slice
+          let dbg = &"{conf[s.file].fullPath}:{s.line}:{s.column.a}..{s.column.b} -- {db$id}"
           with prepLocation:
-            bindParam(1, id.int + declShift)
+            bindParam(1, id.int)
             bindParam(2, s.file)
             bindParam(3, s.line)
             bindParam(4, s.column.a)
             bindParam(5, s.line)
             bindParam(6, s.column.b)
             bindParam(7, trailLocToken)
+            bindParam(8, dbg)
 
           conn.doExec(prepLocation)
 
           with prepOccur:
             bindParam(1, occur.refid)
-            bindParam(2, id.int + declShift)
-            bindParam(3,
-              &"{conf[s.file].fullPath}:{s.line}:{s.column.a}..{s.column.b} -- {db$id}")
+            bindParam(2, id.int)
+            bindParam(3, dbg)
 
           conn.doExec(prepOccur)
 
