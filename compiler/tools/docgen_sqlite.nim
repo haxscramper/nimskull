@@ -296,6 +296,34 @@ type
     nodeMacro = 1 shl 19
     nodeUnion = 1 shl 20
 
+  TrailEdge = enum
+    edgeUndefined = 0
+    edgeMember = 1 shl 0
+    edgeTypeUsage = 1 shl 1
+    edgeUsage = 1 shl 2
+    edgeCall = 1 shl 3
+    edgeInheritance = 1 shl 4
+    edgeOverride = 1 shl 5
+    edgeTypeArgument = 1 shl 6
+    edgeTemplateSpecialization = 1 shl 7
+    edgeInclude = 1 shl 8
+    edgeImport = 1 shl 9
+    edgeBundledEdges = 1 shl 10
+    edgeMacroUsage = 1 shl 11
+    edgeAnnotationUsage = 1 shl 12
+
+
+  TrailLoc = enum
+    trailLocToken = 0
+    trailLocScope = 1
+    trailLocQualifier = 2
+    trailLocLocalSymbol = 3
+    trailLocSignature = 4
+    trailLocComment = 5
+    trailLocError = 6
+    trailLocFulltextSearch = 7
+    trailLocScreenSearch = 8
+    trailLocUnsolved = 9
 
 func toStrail(kind: DocEntryKind): TrailSymbol =
   case kind:
@@ -354,6 +382,7 @@ func toStrailNode(kind: DocEntryKind): TrailNode =
     of strailSymUnion: nodeUnion
 
 
+
 func toStrail(kind: DocOccurKind): TrailRelation =
   case kind:
      of dokTypeAsArgUse, dokTypeAsReturnUse, dokTypeAsFieldUse:
@@ -382,6 +411,24 @@ func toStrail(kind: DocOccurKind): TrailRelation =
 
      else:
        strailRelUndefined
+
+func toStrailEdge(kind: DocOccurKind): TrailEdge =
+  case toStrail(kind):
+    of strailRelUndefined: edgeUndefined
+    of strailRelTypeUsage: edgeTypeUsage
+    of strailRelUsage: edgeUsage
+    of strailRelCall: edgeCall
+    of strailRelInheritance: edgeInheritance
+    of strailRelOverride: edgeOverride
+    of strailRelTemplateSpecialization: edgeTemplateSpecialization
+    of strailRelInclude: edgeInclude
+    of strailRelImport: edgeImport
+    of strailRelMacroUsage: edgeMacroUsage
+    of strailRelAnnotationUsage: edgeAnnotationUsage
+    of strailRelTypeArgument: edgeTypeArgument
+
+    # of strailRelBundledEdges: edgeBundledEdges
+    # of strailRelMember: edgeMember
 
 const settings = """
 <?xml version="1.0" encoding="utf-8" ?>
@@ -455,11 +502,13 @@ FOREIGN KEY(id) REFERENCES node(id) ON DELETE CASCADE
 
       conn.doExec(prep)
 
+  # Edge between elemen table entries
   var insertEdge = conn.prepare conn.newTableWithInsert("edge", {
     ("id", 1): sq(int) & sqNNil,
     ("type", 2): sq(int) & sqNNil,
     ("source_node_id", 3): sq(int) & sqNNil,
     ("target_node_id", 4): sq(int) & sqNNil,
+    ("debug", 5): sq(string)
   }, extra = """
 PRIMARY KEY(id),
 FOREIGN KEY(id) REFERENCES element(id) ON DELETE CASCADE,
@@ -467,11 +516,16 @@ FOREIGN KEY(source_node_id) REFERENCES node(id) ON DELETE CASCADE,
 FOREIGN KEY(target_node_id) REFERENCES node(id) ON DELETE CASCADE
 """)
 
+  var insertElement = conn.prepare conn.newTableWithInsert("element", {
+    ("id", 1): sq(int),
+  }, extra = "PRIMARY KEY(id)")
+
   var pathOffset = 0
   withPrepared(conn, conn.newTableWithInsert("node", {
     ("id", 1): sq(int) & sqNNil,
     ("type", 2): sq(int) & sqNNil,
-    ("serialized_name", 3): sq(string)
+    ("serialized_name", 3): sq(string),
+    ("debug", 4): sq(string)
   }, extra = """
 PRIMARY KEY(id),
 FOREIGN KEY(id) REFERENCES element(id) ON DELETE CASCADE
@@ -496,17 +550,18 @@ FOREIGN KEY(id) REFERENCES element(id) ON DELETE CASCADE
         path.add top
 
         reverse(path)
-        for idx, part in path:
-          if 0 < idx:
-            with insertEdge:
-              bindParam(1, pathOffset)
-              bindParam(2, strailRelAnnotationUsage)
-              bindParam(3, path[idx - 1])
-              bindParam(4, path[idx])
+        # for idx, part in path:
+        #   if 0 < idx:
+        #     with insertEdge:
+        #       bindParam(1, pathOffset)
+        #       bindParam(2, strailRelAnnotationUsage)
+        #       bindParam(3, path[idx - 1])
+        #       bindParam(4, path[idx])
+        #       bindParam(5, )
 
-            inc pathOffset
+        #     inc pathOffset
 
-            conn.doExec(insertEdge)
+        #     conn.doExec(insertEdge)
 
         name.add "::" # Name delimiter
         name.add metaDelimiter
@@ -534,18 +589,14 @@ FOREIGN KEY(id) REFERENCES element(id) ON DELETE CASCADE
         prep.bindParam(1, id)
         prep.bindParam(2, entry.kind.toStrailNode())
         prep.bindParam(3, name)
+        prep.bindParam(4, db $ id)
         conn.doExec(prep)
 
-  withPrepared(conn, insertEdge):
-    for id, occur in db.occurencies:
-      if occur.kind notin dokLocalKinds and occur.user.isSome():
-        with prep:
-          bindParam(1, id.int + pathOffset)
-          bindParam(2, occur.kind.toStrail())
-          bindParam(3, occur.user.get())
-          bindParam(4, occur.refid)
+        insertElement.bindParam(1, id)
+        conn.doExec(insertElement)
 
-        conn.doExec(prep)
+  withPrepared(conn, insertElement):
+    discard
 
   withPrepared(conn, conn.newTableWithInsert("local_symbol", {
     ("id", 1): sq(int) & sqNNil,
@@ -568,12 +619,6 @@ FOREIGN KEY(id) REFERENCES element(id) ON DELETE CASCADE
 """)):
     discard
 
-  conn.exec sql"DROP TABLE IF EXISTS element"
-  conn.exec sql"""
-CREATE TABLE element(
-  id INTEGER,
-  PRIMARY KEY(id));
-"""
 
   conn.exec sql"DROP TABLE IF EXISTS element_component"
   conn.exec sql"""
@@ -599,9 +644,11 @@ FOREIGN KEY(id) REFERENCES node(id) ON DELETE CASCADE
       prep.bindParam(2, 2)
       conn.doExec(prep)
 
+  # occurrence table stores locations of the node definitions and usages.
   withPrepared(conn, conn.newTableWithInsert("occurrence", {
     ("element_id", 1): sq(int),
-    ("source_location_id", 2): sq(int)
+    ("source_location_id", 2): sq(int),
+    ("debug", 3): sq(string)
   }), prepOccur):
     withPrepared(conn, conn.newTableWithInsert("source_location", {
       ("id", 1): sq(int),
@@ -621,21 +668,38 @@ FOREIGN KEY(file_node_id) REFERENCES node(id) ON DELETE CASCADE
 
       for id, occur in db.occurencies:
         if occur.kind notin dokLocalKinds:
+          let s = occur.slice
           with prepLocation:
             bindParam(1, id.int + declShift)
-            bindParam(2, occur.slice.file)
-            bindParam(3, occur.slice.line)
-            bindParam(4, occur.slice.column.a)
-            bindParam(5, occur.slice.line)
-            bindParam(6, occur.slice.column.b)
+            bindParam(2, s.file)
+            bindParam(3, s.line)
+            bindParam(4, s.column.a)
+            bindParam(5, s.line)
+            bindParam(6, s.column.b)
+            bindParam(7, trailLocToken)
 
           conn.doExec(prepLocation)
 
           with prepOccur:
             bindParam(1, occur.refid)
             bindParam(2, id.int + declShift)
+            bindParam(3,
+              &"{conf[s.file].fullPath}:{s.line}:{s.column.a}..{s.column.b} -- {db$id}")
 
           conn.doExec(prepOccur)
+
+  withPrepared(conn, insertEdge):
+    for id, occur in db.occurencies:
+      if occur.kind notin dokLocalKinds and occur.user.isSome():
+        with prep:
+          bindParam(1, id.int + pathOffset)
+          bindParam(2, occur.kind.toStrailEdge())
+          bindParam(3, occur.user.get())
+          bindParam(4, occur.refid)
+          bindParam(5, db $ id)
+
+        conn.doExec(prep)
+
 
 
 #   for line in splitLines("""

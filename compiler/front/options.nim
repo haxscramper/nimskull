@@ -28,6 +28,19 @@ const
 
   nimEnableCovariance* = defined(nimEnableCovariance)
 
+template withIt*(expr: untyped, body: untyped): untyped =
+  block:
+    var it {.inject.} = expr
+    body
+    it
+
+template tern*(predicate: bool, tBranch: untyped, fBranch: untyped): untyped =
+  ## Shorthand for inline if/else. Allows use of conditions in strformat,
+  ## simplifies use in expressions. Less picky with formatting
+  {.line: instantiationInfo(fullPaths = true).}:
+    block:
+      if predicate: tBranch else: fBranch
+
 const
   harmlessOptions* = {optForceFullMake, optNoLinking, optRun, optUseColors, optStdout}
   genSubDir* = RelativeDir"nimcache"
@@ -1359,3 +1372,4 @@ proc floatInt64Align*(conf: ConfigRef): int16 =
       # to 4bytes (except with -malign-double)
       return 4
   return 8
+

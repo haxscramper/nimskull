@@ -5,6 +5,8 @@ import compiler/utils/[pathutils, platform]
 import compiler/ast/[report_enums]
 import std/[sets, strtabs]
 
+
+
 type
   TGlobalOption* = enum
     gloptNone

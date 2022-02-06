@@ -1,5 +1,5 @@
 import
-  ast/ast,
+  ast/[ast, renderer],
   sem/[
     passes,
     semdata
@@ -11,7 +11,9 @@ import
     intsets,
     tables,
     hashes,
-    strformat
+    strformat,
+    sequtils,
+    strutils
   ]
 
 type
@@ -141,7 +143,7 @@ type
     ## `var` parameter etc. would count as 'read' action.
     dokGlobalDeclare = "globalDecl"
 
-    dokFieldUse = "fieldGet"
+    dokFieldUse = "fieldUse"
     dokFieldSet = "fieldSet"
     dokEnumFieldUse = "enumFieldUse"
 
@@ -525,3 +527,84 @@ func initDocPart*(str: string): DocTextPart =
 
 func initDocText*(str: string): DocText =
   DocText(parts: @[initDocPart(str)])
+
+proc fullName*(db: DocDb, id: DocEntryId): string =
+  result.add db[id].name
+  case db[id].kind:
+    of ndkProcKinds:
+      result.add "("
+      for idx, arg in db[id].nested:
+        if 0 < idx: result.add ", "
+        result.add db[arg].name
+        result.add ": "
+        result.add $db[arg].argType
+
+      result.add ")"
+
+    of ndkField:
+      result.add ": "
+      result.add $db[id].fieldType
+
+    else:
+      discard
+
+
+proc `$`*(db: DocDb, id: DocOccurId): string =
+  var r: string
+  template e(): untyped = db[id]
+
+  r.add &"[{id.int}]: {e().kind}"
+  if e().kind notin dokLocalKinds and
+     not e().refid.isNil():
+
+    r.add &" of [{e().refid.int}] "
+    r.add &"({db[e().refid].kind} '{db.fullName(e().refid)}')"
+
+  r.add &" at {e().slice}"
+
+  if e().user.isSome():
+    r.add &" user: {e().user.get().int}"
+
+  if e().inExpansionOf.isSome():
+    r.add &" expansion: {e().inExpansionOf.get().int}"
+
+  return r
+
+proc `$`*(db: DocDb, id: DocEntryId): string =
+  var r: string
+  template e(): untyped = db[id]
+
+  r.add &"[{id.int}]: {e().visibility} {e().kind} '{db.fullName(id)}'"
+
+  if e().parent.isSome():
+    r.add &" parent [{e().parent.get.int}]"
+
+  if e().location.isSome():
+    let l = e().location.get()
+    r.add &" in {l.fileIndex.int}({l.line}, {l.col})"
+
+  if e().context.preSem:
+    r.add " (presem)"
+
+  if e().context.whenConditions.len > 0:
+    let conds = e().context.whenConditions.mapIt(
+      "(" & $it & ")").join(" and ")
+
+    r.add " available when "
+    r.add conds
+
+  if e().deprecatedMsg.isSome():
+    r.add " deprecated"
+    if e().deprecatedMsg.get().len > 0:
+      r.add ": '"
+      r.add e().deprecatedMsg.get()
+      r.add "'"
+
+  if e().docText.parts.len > 0:
+    r.add " doc: '"
+    for part in e().docText.parts:
+      r.add part.text.replace("\n", "\\n")
+
+    r.add "'"
+
+  return r
