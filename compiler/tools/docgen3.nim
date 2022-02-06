@@ -797,6 +797,3 @@ proc commandDoc3*(graph: ModuleGraph, ext: string) =
     graph.config.writeEtags(db, outTags)
     echo "wrote etags to the ", outTags.string
 
-  block:
-    graph.config.writeSourcetrail(db, AbsoluteFile"/tmp/docdb.srctrldb")
-    echo "wrote sourcetral db to /tmp/docdb.srctrldb"
