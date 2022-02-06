@@ -675,6 +675,27 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
 
   return back.db
 
+proc entrySignature(db: DocDb, id: DocEntryId): string =
+  result.add db[id].name
+  case db[id].kind:
+    of ndkProcKinds:
+      result.add "("
+      for idx, arg in db[id].nested:
+        if 0 < idx: result.add ", "
+        result.add db[arg].name
+        result.add ": "
+        result.add $db[arg].argType
+
+      result.add ")"
+
+    of ndkField:
+      result.add ": "
+      result.add $db[id].fieldType
+
+    else:
+      discard
+
+
 proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
   var res = open("/tmp/res_dump", fmWrite)
   res.writeLine("DOCUMENTABLE ENTRIES:")
@@ -682,26 +703,7 @@ proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
     var r: string
     template e(): untyped = db[id]
 
-    r.add &"[{id.int}]: {e().visibility} {e().kind} '{e().name}"
-    case entry.kind:
-      of ndkProcKinds:
-        r.add "("
-        for idx, arg in entry.nested:
-          if 0 < idx: r.add ", "
-          r.add db[arg].name
-          r.add ": "
-          r.add $db[arg].argType
-
-        r.add ")"
-
-      of ndkField:
-        r.add ": "
-        r.add $entry.fieldType
-
-      else:
-        discard
-
-    r.add "'"
+    r.add &"[{id.int}]: {e().visibility} {e().kind} '{db.entrySignature(id)}'"
 
     if e().parent.isSome():
       r.add &" parent [{e().parent.get.int}]"
@@ -759,8 +761,10 @@ proc writeFlatDump*(conf: ConfigRef, db: DocDb) =
 
   res.close()
 
-proc writeEtags*(conf: ConfigRef, db: DocDb) =
-  var tagfile = open("/tmp/etags", fmWrite)
+const ndkOnlyNested* = {ndkArg, ndkInject}
+
+proc writeEtags*(conf: ConfigRef, db: DocDb, file: AbsoluteFile) =
+  var tagfile = open(file.string, fmWrite)
   # https://git.savannah.gnu.org/cgit/emacs.git/tree/etc/ETAGS.EBNF
 
   const
@@ -769,11 +773,16 @@ proc writeEtags*(conf: ConfigRef, db: DocDb) =
     DEL = '\x7f' # pattern terminator
     SOH = '\x01' # name terminator
 
-  var perFile: Table[FileIndex, DocEntrySet]
+  var perFile: OrderedTable[FileIndex, DocEntrySet]
   for id, entry in db.entries:
-    if entry.location.isSome():
+    if entry.kind notin ndkOnlyNested and entry.location.isSome():
       perFile.mgetOrPut(
         entry.location.get().fileIndex, DocEntrySet()).incl id
+
+  for id, file in conf.m.fileInfos:
+    # etags require actual parts of the source code to be present and
+    # searchable, so calling `numLines` here to populate `.lines` data.
+    discard conf.numLines(FileIndex(id))
 
   # `tagfile ::= { tagsection }` - etags file consists of multiple
   # (unlimited number of) repeating sections
@@ -784,20 +793,26 @@ proc writeEtags*(conf: ConfigRef, db: DocDb) =
     # `regularsec ::= filename "," [ unsint ] [ LF fileprop ] { LF tag }`
 
     # `filename`
-    tagfile.write(conf.toMsgFilename(file), ",")
+    tagfile.write(conf.toFilenameOption(file, foAbs), ",")
     for id in ids: # `{ LF tag }`
       tagfile.write(LF)
       # `tag ::= directtag | patterntag`
       # `patterntag ::= pattern DEL [ tagname SOH ] position`
       # `position ::= realposition | ","`
       # `realposition ::= "," unsint | unsint "," | unsint "," unsint`
+      let loc = db[id].location.get()
       tagfile.write(
-        # `pattern DEl`
-        "test", DEL,
-        # `tagname SOH`
-        db[id].name, SOH,
+        # `pattern DEl`. In that canse pattern is a piece of code that
+        # emacs will progressively try to search in the target file, so
+        # instead of trying to reconstruct all possible prefixes on all
+        # possible indentation levels just reusing original source code
+        # here.
+        conf.m.fileInfos[loc.fileIndex.int32].lines[loc.line - 1], DEL,
+        # `tagname SOH` - tagname will displayed in the emacs, so rendering
+        # actual signature here.
+        db.entrySignature(id), SOH,
         # `position -> realposition -> unsint "," unsint`
-        db[id].location.get().line, ",", db[id].location.get().col
+        loc.line, ",", loc.col
       )
 
   close(tagfile)
@@ -837,18 +852,19 @@ proc commandDoc3*(graph: ModuleGraph, ext: string) =
   compileProject(graph)
   echo "Compiled documentation generator project"
 
+  graph.config.writeFlatDump(db)
+  echo "wrote list of tags to the /tmp/res_dump"
+
   if false:
-    graph.config.writeFlatDump(db)
-    echo "wrote list of tags to the /tmp/res_dump"
-
-    graph.config.writeEtags(db)
-    echo "wrote etags to the /tmp/etags"
-
     graph.config.writeJsonLines(db)
     echo "wrote json to the /tmp/jtags"
 
-    graph.config.writeSqlite(db, AbsoluteFile"/tmp/docdb.sqlite")
-    echo "wrote sqlite db to /tmp/docdb.sqlite"
+  graph.config.writeSqlite(db, AbsoluteFile"/tmp/docdb.sqlite")
+  echo "wrote sqlite db to /tmp/docdb.sqlite"
+
+  let outTags = graph.config.projectFull.changeFileExt("etags")
+  graph.config.writeEtags(db, outTags)
+  echo "wrote etags to the ", outTags.string
 
   graph.config.writeSourcetrail(db, AbsoluteFile"/tmp/docdb.srctrldb")
   echo "wrote sourcetral db to /tmp/docdb.srctrldb"

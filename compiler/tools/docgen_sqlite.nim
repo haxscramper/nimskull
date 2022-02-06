@@ -214,6 +214,8 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
           bindParam(6, s.column.a)
           bindParam(7, s.column.b)
 
+        conn.doExec prep
+
   proc kindTable[E: enum](e: typedesc[E]) =
     withPrepared(conn, conn.newTableWithInsert($E, {
       ("id", 1): sq(int),
