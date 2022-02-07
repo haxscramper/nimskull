@@ -31,9 +31,7 @@ import
   std/[
     tables,
     hashes,
-    strutils,
-    strformat,
-    sequtils
+    strutils
   ]
 
 import std/options as std_options
@@ -823,10 +821,20 @@ proc commandDoc3*(graph: ModuleGraph, ext: string) =
     graph.config.writeJsonLines(db)
     echo "wrote json to the /tmp/jtags"
 
+  let outSql = graph.config.projectFull.changeFileExt("sqlite")
   block:
-    let outSql = graph.config.projectFull.changeFileExt("sqlite")
     graph.config.writeSqlite(db, outSql)
     echo "wrote sqlite db to ", outSql.string
+
+  block:
+    var newConf = ConfigRef()
+    var newDb = DocDb()
+    readSqlite(newConf, newDb, outSql)
+    echo "read sqlite from ", outSql.string
+
+    let outSql2 = graph.config.projectFull.changeFileExt("sqlite2")
+    graph.config.writeSqlite(newDb, outSql2)
+    echo "wrote sqlite database back ", outSql2.string
 
   block:
     let outTags = graph.config.projectFull.changeFileExt("etags")

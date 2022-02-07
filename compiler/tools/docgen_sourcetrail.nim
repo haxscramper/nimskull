@@ -247,7 +247,7 @@ proc recordSymbol*(
   )
 
 
-proc toRange(fileId: cint, codeRange: DocCodeLocation): SourcetrailSourceRange =
+proc toRange(fileId: cint, codeRange: DocLocation): SourcetrailSourceRange =
   with result:
     fileId = fileId
     startLine = codeRange.line.cint
@@ -277,7 +277,7 @@ proc registerUses*(
     writer: var SourcetrailDBWriter, idMap: IdMap, db: DocDb) =
   var lastDeclare: DocOccurKind
   for id, occur in db.occurencies:
-    let fileId = idMap.fileToTrail[db[occur.slice].file]
+    let fileId = idMap.fileToTrail[db[occur.loc].file]
 
     var userId: cint
     if occur.user.isSome():
@@ -286,7 +286,7 @@ proc registerUses*(
     if occur.kind in dokLocalKinds:
       discard writer.recordLocalSymbolLocation(
         writer.recordLocalSymbol(occur.localId),
-        toRange(fileId, db[occur.slice]))
+        toRange(fileId, db[occur.loc]))
 
     elif occur.kind in {
       dokObjectDeclare, dokCallDeclare,
@@ -297,7 +297,7 @@ proc registerUses*(
       userId = idMap.docToTrail[occur.refid]
       lastDeclare = occur.kind
       discard writer.recordSymbolLocation(
-        userId, toRange(fileId, db[occur.slice]))
+        userId, toRange(fileId, db[occur.loc]))
 
     elif occur.kind in {dokImported}:
       when false:
@@ -311,7 +311,7 @@ proc registerUses*(
                 writer.getFile(target.getPathInPackage().string, "nim"),
                 srkInclude
               ),
-              toRange(fileId, part.slice))
+              toRange(fileId, part.loc))
 
         elif false:
           # Record module relationship as 'include' between file and
@@ -322,7 +322,7 @@ proc registerUses*(
               idMap.docToTrail[occur.refid],
               srkInclude
             ),
-            toRange(fileId, part.slice))
+            toRange(fileId, part.loc))
 
         elif false:
           # Record relations betwen modules as imports
@@ -332,7 +332,7 @@ proc registerUses*(
               idMap.docToTrail[occur.refid],
               srkImport
             ),
-            toRange(fileId, part.slice))
+            toRange(fileId, part.loc))
 
     else:
       let targetId = idMap.docToTrail[occur.refid]
@@ -384,7 +384,7 @@ proc registerUses*(
         userId, targetId, useKind)
 
       discard writer.recordReferenceLocation(
-        refSym, toRange(fileId, db[occur.slice]))
+        refSym, toRange(fileId, db[occur.loc]))
 
 iterator parents(db: DocDb, id: DocEntryId): DocEntryId =
   var buf: seq[DocEntryId] = @[id]

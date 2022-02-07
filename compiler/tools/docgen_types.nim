@@ -165,7 +165,7 @@ const
 declareIdType(Expansion, addHash = true)
 declareIdType(DocOccur, addHash = true)
 declareIdType(DocEntry, addHash = true)
-declareIdType(DocCodeLocation, addHash = true)
+declareIdType(DocLocation, addHash = true)
 declareIdType(DocExtent, addHash = true)
 
 
@@ -186,7 +186,7 @@ type
 declareStoreType(Expansion)
 
 type
-  DocCodeLocation* = object
+  DocLocation* = object
     ## Single continious slice of the code in file -
     ## file/line:col-start:col-end information
     file*: FileIndex
@@ -197,7 +197,7 @@ type
     file*: FileIndex
     start*, finish*: tuple[line, column: int]
 
-declareStoreType(DocCodeLocation)
+declareStoreType(DocLocation)
 declareStoreType(DocExtent)
 
 type
@@ -212,7 +212,7 @@ type
     ## identifier (for local variables, arguments etc).
     inExpansionOf*: Option[ExpansionId]
 
-    slice*: DocCodeLocationId ## Position of the occurence in the project
+    loc*: DocLocationId ## Position of the occurence in the project
     ## files.
     node*: PNode ## Node that occurence happened in. In the future this
     ## should be converted to node IDs
@@ -315,7 +315,7 @@ type
 
     context*: DocDeclarationContext
     extent*: Option[DocExtentId]
-    location*: Option[DocCodeLocationId] ## Source code extent for
+    location*: Option[DocLocationId] ## Source code extent for
     ## documentable entry 'head'. Points to single identifier - entry name
     ## in declaration.
     nested*: seq[DocEntryId] ## Nested documentable entries. Use to store
@@ -405,7 +405,7 @@ type
     named*: Table[string, DocEntryId]
     expandedNodes*: Table[int, ExpansionId]
     extents*: DocExtentStore
-    locations*: DocCodeLocationStore
+    locations*: DocLocationStore
     expansions*: ExpansionStore ## List of known expansion bettween
     ## open/close for module
     occurencies*: DocOccurStore
@@ -420,7 +420,7 @@ type
 declareStoreField(DocDb, entries, DocEntry)
 declareStoreField(DocDb, expansions, Expansion)
 declareStoreField(DocDb, occurencies, DocOccur)
-declareStoreField(DocDb, locations, DocCodeLocation)
+declareStoreField(DocDb, locations, DocLocation)
 declareStoreField(DocDb, extents, DocExtent)
 
 func add*(de: var DocEntry, id: DocEntryId) =
@@ -500,7 +500,7 @@ proc getExpansion*(db: DocDb, node: PNode): ExpansionId =
   ## Get expansion tha tnode was generated from
   return db.expandedNodes[node.id]
 
-func `$`*(slice: DocCodeLocation): string =
+func `$`*(slice: DocLocation): string =
   &"{slice.file.int}/{slice.line}:{slice.column.a}..{slice.column.b}"
 
 func initDocPart*(str: string): DocTextPart =
@@ -545,7 +545,7 @@ proc `$`*(db: DocDb, id: DocOccurId): string =
     r.add &" of [{e().refid.int}] "
     r.add &"({db[e().refid].kind} '{db.fullName(e().refid)}')"
 
-  r.add &" at {e().slice}"
+  r.add &" at {e().loc}"
 
   if e().user.isSome():
     r.add &" user: {e().user.get().int}"
@@ -595,12 +595,12 @@ proc `$`*(db: DocDb, id: DocEntryId): string =
   return r
 
 proc initDocSlice*(
-    line, startCol, endCol: int, file: FileIndex): DocCodeLocation =
+    line, startCol, endCol: int, file: FileIndex): DocLocation =
   if endCol == -1:
-    DocCodeLocation(
+    DocLocation(
       line: line, column: Slice[int](a: -1, b: -1), file: file)
 
   else:
     assert startCol <= endCol, &"{startCol} <= {endCol}"
-    DocCodeLocation(
+    DocLocation(
       line: line, column: Slice[int](a: startCol, b: endCol), file: file)

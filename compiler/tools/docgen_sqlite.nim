@@ -11,7 +11,8 @@ import
     strformat,
     os,
     times,
-    algorithm
+    algorithm,
+    typetraits
   ],
   front/[
     options,
@@ -19,7 +20,8 @@ import
   ],
   ast/[
     ast,
-    renderer
+    renderer,
+    lineinfos
   ],
   utils/[
     pathutils
@@ -115,7 +117,7 @@ proc bindParam[E: enum](ps: SqlPrepared, idx: int, opt: E) =
 proc bindParam(
     ps: SqlPrepared, idx: int,
     it: FileIndex | DocEntryId | DocOccurId | uint16 | int | bool |
-        DocCodeLocationId | DocExtentId
+        DocLocationId | DocExtentId
   ) =
 
   bindParam(ps, idx, it.int)
@@ -145,17 +147,16 @@ template withPrepared(
 template withPrepared(conn: DbConn, prepCode: string, body: untyped): untyped =
   withPrepared(conn, prepCode, prep, body)
 
+const tab = (
+  files: "files",
+  entr: "entries",
+  occur: "occurencies",
+  loc: "locations",
+  ext: "extents"
+)
 
 proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
   var conn = open(file.string, "", "", "")
-
-  let tab = (
-    files: "files",
-    entr: "entries",
-    occur: "occurencies",
-    loc: "locations",
-    ext: "extents"
-  )
 
   conn.exec(sql"BEGIN TRANSACTION")
 
@@ -170,7 +171,7 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
   func toSqlite(t: typedesc[FileIndex]): string =
     sq(int) & refs(tab.files)
 
-  func toSqlite(t: typedesc[DocCodeLocationId]): string =
+  func toSqlite(t: typedesc[DocLocationId]): string =
     sq(int) & refs(tab.loc)
 
   func toSqlite(t: typedesc[DocExtentId]): string =
@@ -190,27 +191,20 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
     ("id", 1): sq(int) & sqPrimary,
     ("name", 2): sq(string),
     ("kind", 3): sq(DocEntryKind),
-    ("decl_file", 4): sq(FileIndex),
-    ("decl_line", 5): sq(int),
-    ("decl_col", 6): sq(int)
+    ("location", 4): sq(DocLocationId),
+    ("extent", 5): sq(DocExtentId)
   })):
     for id, entry in db.entries:
-      let loc = entry.location
       with prep:
         bindParam(1, id)
         bindParam(2, entry.name)
         bindParam(3, entry.kind)
 
-      if loc.isSome():
-        let loc = db[loc.get()]
-        prep.bindParam(4, loc.file)
-        prep.bindParam(5, loc.line)
-        prep.bindParam(6, loc.column.a)
+      if entry.location.isSome():
+        prep.bindParam(4, entry.location.get())
 
-      else:
-        prep.bindNull(4)
-        prep.bindNull(5)
-        prep.bindNull(6)
+      if entry.extent.isSome():
+        prep.bindParam(5, entry.location.get())
 
       conn.doExec(prep)
 
@@ -253,18 +247,20 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
   withPrepared(conn, conn.newTableWithInsert(tab.occur, {
     ("id", 1): sq(int) & sqPrimary,
     ("kind", 2): sq(DocOccurKind),
-    ("occur_of", 3): sq(DocEntryId),
-    ("loc", 4): sq(DocCodeLocationId)
+    ("refid", 3): sq(DocEntryId),
+    ("loc", 4): sq(DocLocationId)
   })):
     for id, occur in db.occurencies:
-      if occur.kind notin dokLocalKinds:
-        with prep:
-          bindParam(1, id)
-          bindParam(2, occur.kind)
-          bindParam(3, occur.refid)
-          bindParam(4, occur.slice)
+      with prep:
+        bindParam(1, id)
+        bindParam(2, occur.kind)
 
-        conn.doExec prep
+      if occur.kind notin dokLocalKinds:
+        prep.bindParam(3, occur.refid)
+
+      prep.bindParam(4, occur.loc)
+
+      conn.doExec prep
 
   proc kindTable[E: enum](e: typedesc[E]) =
     withPrepared(conn, conn.newTableWithInsert($E, {
@@ -281,3 +277,124 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
 
   conn.exec(sql"END TRANSACTION")
   conn.close()
+
+proc getColumn(row: InstantRow, value: var float, idx: int) =
+  value = column_double(row, idx.int32)
+
+proc getColumn(row: InstantRow, value: var string, idx: int) =
+  value = $column_text(row, idx.int32)
+
+proc getColumn[I: SomeInteger](row: InstantRow, value: var I, idx: int) =
+  value = I(column_int(row, idx.int32))
+
+proc getColumn[T: distinct](row: InstantRow, value: var T, idx: int) =
+  var tmp: distinctBase(typeof(value))
+  getColumn(row, tmp, idx)
+  value = typeof(value)(tmp)
+
+proc getColumn[T](row: InstantRow, value: var Option[T], idx: int) =
+  if column_type(row, idx.int32) != SQLITE_NULL:
+    var tmp: T
+    getColumn(row, tmp, idx)
+    value = some tmp
+
+proc getColumn[E: enum](col: InstantRow, value: var E, idx: int) =
+  var tmp: int
+  getColumn(col, tmp, idx)
+  value = E(tmp)
+
+iterator typedRows[T: tuple](
+    conn: DbConn, query: SqlQuery | SqlPrepared,
+    types: typedesc[T]): T =
+
+  for row in instantRows(conn, query):
+    var res: T
+    var idx = 0
+    for field, value in fieldPairs(res):
+      getColumn(row, value, idx)
+      inc idx
+
+    yield res
+
+iterator typedRows[T: tuple](
+    conn: DbConn, table: string, types: typedesc[T]): T =
+
+  when not isNamedTuple(types):
+    {.error: "`typedRows` expects named tuple elements".}
+
+  var query = "SELECT "
+  var idx = 0
+  var tmp: T
+  for name, value in fieldPairs(tmp):
+    if 0 < idx: query.add ", "
+    query.add name
+    inc idx
+
+  query.add " FROM " & table & ";"
+
+  for res in typedRows(conn, sql(query), types):
+    yield res
+
+proc readSqlite*(conf: ConfigRef, db: var DocDb, file: AbsoluteFile) =
+  var conn = open(file.string, "", "", "")
+  for row in conn.typedRows(tab.files, tuple[id: FileIndex, abs: string]):
+    conf.m.fileInfos.add TFileInfo(
+      fullPath: row.abs.AbsoluteFile
+    )
+
+    doAssert row.id.int == conf.m.fileInfos.high
+
+  for (id, name, kind, loc, ext) in conn.typedRows(tab.entr, tuple[
+    id: DocEntryId,
+    name: string,
+    kind: DocEntryKind,
+    location: Option[DocLocationId],
+    extent: Option[DocExtentId]
+  ]):
+    doAssert id == db.add(DocEntry(
+      name: name,
+      kind: kind,
+      location: loc,
+      extent: ext
+    ))
+
+  for (id, file, line, a, b) in conn.typedRows(tab.loc, tuple[
+    id: DocLocationId,
+    file: FileIndex,
+    line: int,
+    col_start: int,
+    col_end: int
+  ]):
+    doAssert id == db.add(DocLocation(
+      file: file,
+      line: line,
+      column: a..b
+    ))
+
+  for (id, file, la, ca, lb, cb) in conn.typedRows(tab.ext, tuple[
+    id: DocExtentId,
+    file: FileIndex,
+    line_start: int,
+    col_start: int,
+    line_end: int,
+    col_end: int
+  ]):
+    doAssert id == db.add(DocExtent(
+      file: file,
+      start: (la, ca),
+      finish: (lb, cb)
+    ))
+
+  for (id, kind, refid, loc) in conn.typedRows(tab.occur, tuple[
+    id: DocOccurId,
+    kind: DocOccurKind,
+    refid: DocEntryId,
+    loc: DocLocationId
+  ]):
+    var occur = DocOccur(kind: kind, loc: loc)
+    if kind notin dokLocalKinds:
+      occur.refid = refid
+
+    doAssert id == db.add(occur)
+
+  close(conn)
