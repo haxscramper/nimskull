@@ -1,10 +1,5 @@
 import
   ast/[ast, renderer],
-  sem/[
-    passes,
-    semdata
-  ],
-  modules/modulegraphs,
   experimental/dod_helpers,
   std/[
     options,

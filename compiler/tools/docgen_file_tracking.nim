@@ -14,11 +14,9 @@ import
   ],
   std/[
     strutils,
-    strformat,
     options,
     hashes,
     tables,
-    enumerate
   ]
 
 const

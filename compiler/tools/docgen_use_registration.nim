@@ -12,15 +12,10 @@ import
     trees,
     wordrecg
   ],
-  front/[
-    options
-  ],
   utils/[
-    debugutils,
     astrepr
   ],
   std/[
-    intsets,
     strutils,
     tables
   ]

@@ -114,7 +114,9 @@ proc bindParam[E: enum](ps: SqlPrepared, idx: int, opt: E) =
 
 proc bindParam(
     ps: SqlPrepared, idx: int,
-    it: FileIndex | DocEntryId | DocOccurId | uint16 | int | bool) =
+    it: FileIndex | DocEntryId | DocOccurId | uint16 | int | bool |
+        DocCodeLocationId | DocExtentId
+  ) =
 
   bindParam(ps, idx, it.int)
 
@@ -150,12 +152,29 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
   let tab = (
     files: "files",
     entr: "entries",
-    occur: "occurencies"
+    occur: "occurencies",
+    loc: "locations",
+    ext: "extents"
   )
 
-  func toSqlite(t: typedesc[DocEntryId]): string = sq("int")
-  func toSqlite(t: typedesc[DocOccurId]): string = sq("int")
-  func toSqlite(t: typedesc[FileIndex]): string = sq("int")
+  conn.exec(sql"BEGIN TRANSACTION")
+
+  func refs(name: string): string = " REFERENCES " & name
+
+  func toSqlite(t: typedesc[DocEntryId]): string =
+    sq(int) & refs(tab.entr)
+
+  func toSqlite(t: typedesc[DocOccurId]): string =
+    sq(int) & refs(tab.occur)
+
+  func toSqlite(t: typedesc[FileIndex]): string =
+    sq(int) & refs(tab.files)
+
+  func toSqlite(t: typedesc[DocCodeLocationId]): string =
+    sq(int) & refs(tab.loc)
+
+  func toSqlite(t: typedesc[DocExtentId]): string =
+    sq(int) & refs(tab.ext)
 
   withPrepared(conn, conn.newTableWithInsert(tab.files, {
       ("id", 1): sq(int) & sqPrimary,
@@ -165,6 +184,7 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
       prep.bindParam(1, idx.int)
       prep.bindParam(2, file.fullPath.string)
       conn.doExec(prep)
+
 
   withPrepared(conn, conn.newTableWithInsert(tab.entr, {
     ("id", 1): sq(int) & sqPrimary,
@@ -194,26 +214,55 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
 
       conn.doExec(prep)
 
+  withPrepared(conn, conn.newTableWithInsert(tab.loc, {
+    ("id", 1): sq(int) & sqPrimary,
+    ("file", 2): sq(int),
+    ("line", 3): sq(int),
+    ("col_start", 4): sq(int),
+    ("col_end", 5): sq(int)
+  })):
+    for id, loc in db.locations:
+      with prep:
+        bindParam(1, id)
+        bindParam(2, loc.file)
+        bindParam(3, loc.line)
+        bindParam(4, loc.column.a)
+        bindParam(5, loc.column.b)
+
+      conn.doExec(prep)
+
+  withPrepared(conn, conn.newTableWithInsert(tab.ext, {
+    ("id", 1): sq(int) & sqPrimary,
+    ("file", 2): sq(FileIndex),
+    ("line_start", 3): sq(int),
+    ("col_start", 4): sq(int),
+    ("line_end", 5): sq(int),
+    ("col_end", 6): sq(int)
+  })):
+    for id, extent in db.extents:
+      with prep:
+        bindParam(1, id)
+        bindParam(2, extent.file)
+        bindParam(3, extent.start.line)
+        bindParam(4, extent.start.column)
+        bindParam(5, extent.finish.line)
+        bindParam(6, extent.finish.column)
+
+      conn.doExec(prep)
+
   withPrepared(conn, conn.newTableWithInsert(tab.occur, {
     ("id", 1): sq(int) & sqPrimary,
     ("kind", 2): sq(DocOccurKind),
     ("occur_of", 3): sq(DocEntryId),
-    ("loc_file", 4): sq(FileIndex),
-    ("loc_line", 5): sq(int),
-    ("loc_col_start", 6): sq(int),
-    ("loc_col_end", 7): sq(int)
+    ("loc", 4): sq(DocCodeLocationId)
   })):
     for id, occur in db.occurencies:
       if occur.kind notin dokLocalKinds:
-        let s = db[occur.slice]
         with prep:
           bindParam(1, id)
           bindParam(2, occur.kind)
           bindParam(3, occur.refid)
-          bindParam(4, s.file)
-          bindParam(5, s.line)
-          bindParam(6, s.column.a)
-          bindParam(7, s.column.b)
+          bindParam(4, occur.slice)
 
         conn.doExec prep
 
@@ -230,4 +279,5 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
   kindTable(DocEntryKind)
   kindTable(DocOccurKind)
 
+  conn.exec(sql"END TRANSACTION")
   conn.close()
