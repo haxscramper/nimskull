@@ -228,6 +228,25 @@ type
 
 declareStoreType(DocOccur)
 
+declareIdType(DocText, addHash = true)
+
+type
+  DocText* = object
+    ## Single chunk of documentation text, can be either source code, or
+    ## runnable examples.
+    text*: string
+    location*: DocLocationId
+    case isRunnable*: bool
+      of true:
+        implicit*: DocEntryId ## Current module id, implicitly
+        ## available in the runnable examples execution environment.
+
+      of false:
+        discard
+
+declareStoreType(DocText)
+
+
 type
   DocTypeHeandkind* = enum
     dthGenericParam ## Unresolved generic parameter
@@ -265,24 +284,6 @@ type
     ## Arbitrary grouping of the documentable entries
     entries*: seq[DocEntryId]
     nested*: seq[DocEntryGroup]
-
-
-  DocTextPart* = object
-    ## Single chunk of documentation text, can be either source code, or
-    ## runnable examples.
-    text*: string
-    case isRunnable*: bool
-      of true:
-        implicitModule*: DocEntryId ## Current module id, implicitly
-        ## available in the runnable examples execution environment.
-
-      of false:
-        discard
-
-  DocText* = object
-    ## Full documentation text for an entry, might consist of several parts
-    ## - text blocks or runnable examples.
-    parts*: seq[DocTextPart]
 
   DocVisibilityKind* = enum
     dvkPrivate = "private" ## Not exported
@@ -330,7 +331,7 @@ type
     ## documentation reader prespective
     deprecatedMsg*: Option[string] ## If entry was annotated with
     ## `{.deprecated.}` contains the pragma text.
-    docText*: DocText
+    docs*: seq[DocTextId]
 
     case kind*: DocEntryKind
       of ndkPackage:
@@ -371,6 +372,7 @@ type
 
       of ndkProcKinds:
         procKind*: DocProcKind
+        returnType*: Option[PNode]
         wrapOf*: Option[string] ## Optional C, C++ or JS pattern used
         ## in the `.importX` pragma annotation
         dynlibOf*: Option[string] ## Dynamic library pattern for the
@@ -406,6 +408,7 @@ type
     expandedNodes*: Table[int, ExpansionId]
     extents*: DocExtentStore
     locations*: DocLocationStore
+    docs*: DocTextStore
     expansions*: ExpansionStore ## List of known expansion bettween
     ## open/close for module
     occurencies*: DocOccurStore
@@ -422,6 +425,7 @@ declareStoreField(DocDb, expansions, Expansion)
 declareStoreField(DocDb, occurencies, DocOccur)
 declareStoreField(DocDb, locations, DocLocation)
 declareStoreField(DocDb, extents, DocExtent)
+declareStoreField(DocDb, docs, DocText)
 
 func add*(de: var DocEntry, id: DocEntryId) =
   de.nested.add id
@@ -503,22 +507,23 @@ proc getExpansion*(db: DocDb, node: PNode): ExpansionId =
 func `$`*(slice: DocLocation): string =
   &"{slice.file.int}/{slice.line}:{slice.column.a}..{slice.column.b}"
 
-func initDocPart*(str: string): DocTextPart =
-  DocTextPart(text: str, isRunnable: false)
+proc `$`*(db: DocDb, id: DocEntryId): string
 
-func initDocText*(str: string): DocText =
-  DocText(parts: @[initDocPart(str)])
-
-proc procSignature*(db: DocDb, id: DocEntryId): string =
+proc procSignature*(
+    db: DocDb, id: DocEntryId, withReturn: bool = true): string =
   assert db[id].kind in ndkProcKinds
   result.add "("
   for idx, arg in db[id].nested:
+    if db[arg].kind != ndkArg:  continue
     if 0 < idx: result.add ", "
     result.add db[arg].name
     result.add ": "
     result.add $db[arg].argType
 
   result.add ")"
+  if withReturn and db[id].returnType.isSome():
+    result.add ": "
+    result.add $db[id].returnType.get()
 
 proc fullName*(db: DocDb, id: DocEntryId): string =
   result.add db[id].name
@@ -533,6 +538,7 @@ proc fullName*(db: DocDb, id: DocEntryId): string =
     else:
       discard
 
+proc `$`*(db: DocDb, id: DocLocationId): string = $db[id]
 
 proc `$`*(db: DocDb, id: DocOccurId): string =
   var r: string
@@ -554,6 +560,7 @@ proc `$`*(db: DocDb, id: DocOccurId): string =
     r.add &" expansion: {e().inExpansionOf.get().int}"
 
   return r
+
 
 proc `$`*(db: DocDb, id: DocEntryId): string =
   var r: string
@@ -585,16 +592,16 @@ proc `$`*(db: DocDb, id: DocEntryId): string =
       r.add e().deprecatedMsg.get()
       r.add "'"
 
-  if e().docText.parts.len > 0:
+  if e().docs.len > 0:
     r.add " doc: '"
-    for part in e().docText.parts:
-      r.add part.text.replace("\n", "\\n")
+    for part in e().docs:
+      r.add db[part].text.replace("\n", "\\n")
 
     r.add "'"
 
   return r
 
-proc initDocSlice*(
+proc initDocLocation*(
     line, startCol, endCol: int, file: FileIndex): DocLocation =
   if endCol == -1:
     DocLocation(

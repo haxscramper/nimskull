@@ -6,7 +6,8 @@ import
     os
   ],
   ast/[
-    lineinfos
+    lineinfos,
+    renderer
   ],
   front/[
     options,
@@ -63,11 +64,15 @@ type
     endLine*: cint
     endColumn*: cint
 
-  SourcetrailDefinitionKind* = enum
+  SourcetrailDefinitionKind* {.
+    importcpp: "sourcetrail::DefinitionKind", header: r"<DefinitionKind.h>".} = enum
+
     sdkImplicit = 1
     sdkExplicit = 2
 
-  SourcetrailSymbolKind* = enum
+  SourcetrailSymbolKind* {.
+    importcpp: "sourcetrail::SymbolKind", header: r"<SymbolKind.h>".} = enum
+
     sskType = 0
     sskBuiltinType = 1
     sskModule = 2
@@ -88,7 +93,9 @@ type
     sskMacro = 17
     sskUnion = 18
 
-  SourcetrailReferenceKind* = enum
+  SourcetrailReferenceKind* {.
+    importcpp: "sourcetrail::ReferenceKind", header: r"<ReferenceKind.h>".} = enum
+
     srkTypeUsage = 0
     srkUsage = 1
     srkCall = 2
@@ -273,6 +280,48 @@ type
     fileToTrail: Table[FileIndex, cint]
     db: DocDb
 
+proc toTrail(kind: DocOccurKind, lastDeclare: DocOccurKind): SourcetrailReferenceKind =
+  case kind:
+    of dokLocalKinds:
+      assert false
+
+    of dokTypeAsFieldUse, dokTypeAsReturnUse, dokTypeDirectUse,
+      dokTypeAsParameterUse, dokTypeAsArgUse, dokTypeConversionUse:
+      result = srkTypeUsage
+
+    of dokTypeSpecializationUse:
+      if lastDeclare == dokAliasDeclare:
+        result = srkTemplateSpecialization
+
+      else:
+        # sourcetrail 'template specialization' relations is used in
+        # order to show that one type is a generic specialization of
+        # another type. In haxdoc 'generic specialization' is used that
+        # in this particular case generic type was specialized with
+        # some parameter - without describing /context/ in which
+        # declaration ocurred. Maybe later I will add support for
+        # 'context ranges' in annotation sources and differentiate
+        # between 'specialized generic used as a field' and 'inherited
+        # from specialized generic'
+        result = srkTypeUsage
+
+    of dokInheritFrom:
+      result = srkInheritance
+
+    of dokCall:
+      result = srkCall
+
+    of dokEnumFieldUse, dokGlobalRead, dokGlobalWrite,
+       dokFieldUse, dokFieldSet:
+      result = srkUsage
+
+    of dokAnnotationUsage, dokDefineCheck, dokExpansion:
+      result = srkMacroUsage
+
+    else:
+      assert false, $kind
+
+
 proc registerUses*(
     writer: var SourcetrailDBWriter, idMap: IdMap, db: DocDb) =
   var lastDeclare: DocOccurKind
@@ -287,6 +336,9 @@ proc registerUses*(
       discard writer.recordLocalSymbolLocation(
         writer.recordLocalSymbol(occur.localId),
         toRange(fileId, db[occur.loc]))
+
+    elif occur.refid.isNil():
+      discard
 
     elif occur.kind in {
       dokObjectDeclare, dokCallDeclare,
@@ -336,52 +388,9 @@ proc registerUses*(
 
     else:
       let targetId = idMap.docToTrail[occur.refid]
-      let useKind =
-        case occur.kind:
-          of dokLocalKinds:
-            assert false
-            srkTypeUsage
-
-          of dokTypeAsFieldUse, dokTypeAsReturnUse, dokTypeDirectUse,
-            dokTypeAsParameterUse, dokTypeAsArgUse, dokTypeConversionUse:
-            srkTypeUsage
-
-          of dokTypeSpecializationUse:
-            if lastDeclare == dokAliasDeclare:
-              srkTemplateSpecialization
-
-            else:
-              # sourcetrail 'template specialization' relations is used
-              # in order to show that one type is a generic
-              # specialization of another type. In haxdoc 'generic
-              # specialization' is used that in this particular case
-              # generic type was specialized with some parameter -
-              # without describing /context/ in which declaration
-              # ocurred. Maybe later I will add support for 'context
-              # ranges' in annotation sources and differentiate between
-              # 'specialized generic used as a field' and 'inherited
-              # from specialized generic'
-              srkTypeUsage
-
-          of dokInheritFrom:
-            srkInheritance
-
-          of dokCall:
-            srkCall
-
-          of dokEnumFieldUse, dokGlobalRead, dokGlobalWrite,
-             dokFieldUse, dokFieldSet:
-            srkUsage
-
-          of dokAnnotationUsage, dokDefineCheck:
-            srkMacroUsage
-
-          else:
-            assert false, $occur.kind
-            srkMacroUsage
 
       let refSym = writer.recordReference(
-        userId, targetId, useKind)
+        userId, targetId, occur.kind.toTrail(lastDeclare))
 
       discard writer.recordReferenceLocation(
         refSym, toRange(fileId, db[occur.loc]))
@@ -400,12 +409,55 @@ proc toTrailName(db: DocDb, id: DocEntryId): SourcetrailNameHierarchy =
   var parts: seq[tuple[prefix, name, postfix: string]]
   for part in db.parents(id):
     if db[part].kind in ndkProcKinds:
-      parts.add ("", db.procSignature(part), "")
+      var ret = ""
+      if db[part].returnType.isSome():
+        ret = ": "
+        ret.add $db[part].returnType.get()
+
+      parts.add (ret, db[part].name, db.procSignature(part, false))
 
     else:
       parts.add ("", db[part].name, "")
 
   return initSourcetrailNameHierarchy(("::", parts))
+
+
+proc toTrail(kind: DocEntryKind): SourcetrailSymbolKind =
+  case kind:
+   of ndkNewtypeKinds - { ndkAlias, ndkDistinctAlias, ndkEnum }:
+     sskStruct
+
+   of ndkProc, ndkFunc, ndkConverter, ndkIterator:
+     sskFunction
+
+   of ndkMacro, ndkTemplate:
+     sskMacro
+
+   of ndkAlias, ndkDistinctAlias:
+     sskTypedef
+
+   of ndkGlobalConst, ndkGlobalVar, ndkGlobalLet:
+     sskGlobalVariable
+
+   of ndkCompileDefine:
+     # compile-time defines might be treated as macros or as global
+     # varibles. I'm not exactly sure how to classify them, but for
+     # now I think global variable describes sematics a little better.
+     sskGlobalVariable
+
+   of ndkEnum:      sskEnum
+   of ndkField:     sskField
+   of ndkEnumField: sskEnumConstant
+   of ndkBuiltin:   sskBuiltinType
+   of ndkPragma:    sskAnnotation
+   of ndkModule:    sskModule
+   of ndkPackage:   sskPackage
+   of ndkMethod:    sskMethod
+   of ndkFile:      sskModule
+
+   else:
+     assert false, $kind
+     sskMethod
 
 
 proc registerDb*(writer: var SourcetrailDBWriter, idMap: IdMap, db: DocDb): IdMap =
@@ -415,52 +467,19 @@ proc registerDb*(writer: var SourcetrailDBWriter, idMap: IdMap, db: DocDb): IdMa
        (entry.kind in {ndkArg}):
       continue
 
-    let name = db.toTrailName(id)
+    let symId = writer.recordSymbol(db.toTrailName(id), entry.kind.toTrail())
 
-    let defKind =
-      case entry.kind:
-        of ndkNewtypeKinds - { ndkAlias, ndkDistinctAlias, ndkEnum }:
-          sskStruct
+    if entry.name == "runnableExamples":
+      echo db $ id
+      echo symId
 
-        of ndkProc, ndkFunc, ndkConverter, ndkIterator:
-          sskFunction
-
-        of ndkMacro, ndkTemplate:
-          sskMacro
-
-        of ndkAlias, ndkDistinctAlias:
-          sskTypedef
-
-        of ndkGlobalConst, ndkGlobalVar, ndkGlobalLet:
-          sskGlobalVariable
-
-        of ndkCompileDefine:
-          # compile-time defines might be treated as macros or as global
-          # varibles. I'm not exactly sure how to classify them, but for
-          # now I think global variable describes sematics a little better.
-          sskGlobalVariable
-
-        of ndkEnum:      sskEnum
-        of ndkField:     sskField
-        of ndkEnumField: sskEnumConstant
-        of ndkBuiltin:   sskBuiltinType
-        of ndkPragma:    sskAnnotation
-        of ndkModule:    sskModule
-        of ndkPackage:   sskPackage
-        of ndkMethod:    sskMethod
-
-        else:
-          assert false, $entry.kind
-          sskMethod
-
-    result.docToTrail[id] = writer.recordSymbol(name, defKind)
+    result.docToTrail[id] = symId
 
     if entry.location.isSome():
-      let loc = db[entry.location.get()]
-      let fileId = idMap.fileToTrail[loc.file]
-      let symId = writer.recordSymbol(name, defKind)
-      result.docToTrail[id] = symId
-      let extent = toRange(fileId, loc)
+      let
+        loc = db[entry.location.get()]
+        fileId = idMap.fileToTrail[loc.file]
+        extent = toRange(fileId, loc)
       discard writer.recordSymbolLocation(symId, extent)
 
       if entry.kind notin {ndkModule, ndkFile}:
@@ -471,7 +490,9 @@ proc open*(writer: var SourcetrailDBWriter, file: AbsoluteFile) =
   discard writer.open(file.string)
 
 proc registerFiles*(writer: var SourcetrailDBWriter, conf: ConfigRef): IdMap =
-  assert false, "TODO"
+  for id, info in conf.m.fileInfos:
+    result.fileToTrail[FileIndex(id)] =
+      writer.getFile(info.fullPath.string, "nim")
 
 proc registerFullDb*(conf: ConfigRef, writer: var SourcetrailDBWriter, db: DocDb) =
   discard writer.beginTransaction()

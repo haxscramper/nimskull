@@ -145,6 +145,12 @@ type
     # backendNimscript = "nimscript" # this could actually work
     # backendLlvm = "llvm" # probably not well supported; was cmdCompileToLLVM
 
+  TDocMode* = enum
+    docDefault
+    docOnefile
+    docUntyped
+    docUntypedOnefile
+
   Command* = enum
     ## Compiler execution command
     cmdNone        ## not yet processed command

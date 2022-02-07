@@ -295,7 +295,7 @@ template passSeqField(fieldname, itemtype: untyped): untyped =
   proc `fieldname Add`*(conf: ConfigRef, item: itemtype | seq[itemtype]) =
     conf.active.fieldname.add item
 
-
+passField docMode,            TDocMode
 passField backend,            TBackend
 passField symbolFiles,        SymbolFilesOption
 passField prefixDir,          AbsoluteDir

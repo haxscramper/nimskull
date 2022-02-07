@@ -63,17 +63,15 @@ type
 
   DefTree* = ref object
     defName*: DefName
-    comment*: string ## Documentation comment for a declaration. Note that
-    ## documentation for the procedures in stored in the separate
-    ## `procDocs` field due `runnableExamples` and multiple comments, which
-    ## might be interleaved with each other.
+    docs*: seq[PNode] ## Documentation comment for declaration - contains
+    ## either nodes that had `.comment` attached, or comment
+    ## statements/runnable entries
     defNode: PNode
 
     case kind*: DefTreeKind
       of deftProc:
         arguments*: seq[DefTree]
         returnType*: PNode
-        procDocs*: seq[PNode]
 
       of deftIdentKinds:
         typ*: PNode
@@ -218,12 +216,16 @@ proc unparseIdentDefs(node: PNode): seq[DefTree] =
     var field = newDef(deftField, unparseName(name), name)
     field.typ = typ
     field.initExpr = expr
-    if idx == node.len - 2:
+    if idx == node.len - 2 and
       # QUESTION putting documentation comment only into the last
       # field, assuming documentation for 'group of fields' would
       # not be used this way, because it means that all target
       # fields must have the same type, which is a major block.
-      field.comment = node.comment
+      0 < len(node.comment):
+      # `0 < len` check is used to don't add nodes with empty comments
+
+
+      field.docs = @[node]
 
     result.add field
 
@@ -282,7 +284,8 @@ proc unparseType*(node: PNode): DefTree =
   case body.kind:
     of nkObjectTy:
       result = newDef(deftObject, unparseName(node[0]), node)
-      result.comment = node.comment
+      if 0 < len(node.comment): result.docs = @[node]
+
       result.objFields = unparseFields(body[2])
 
       if body[1].kind == nkOfInherit:
@@ -290,7 +293,7 @@ proc unparseType*(node: PNode): DefTree =
 
     of nkEnumTy:
       result = newDef(deftEnum, unparseName(node[0]), node)
-      result.comment = body.comment
+      if 0 < len(body.comment): result.docs = @[node]
       for field in body[1..^1]:
         if field.kind in {nkIdent, nkPrefix}:
           result.enumFields.add newDef(
@@ -299,23 +302,27 @@ proc unparseType*(node: PNode): DefTree =
         else:
           result.enumFields.add unparseDefs(field)
 
-        result.enumFields[^1].comment = field.comment
+        if 0 < len(field.comment):
+          result.enumFields[^1].docs = @[field]
 
     of nkDistinctTy:
       result = newDef(deftAlias, unparseName(node[0]), node)
       result.isDistinct = true
       result.baseType = body[0]
-      result.comment = node.comment
+      if 0 < len(node.comment):
+        result.docs = @[node]
 
     of nkInfix, nkProcTy, nkSym, nkIdent, nkBracketExpr, nkTupleTy:
       result = newDef(deftAlias, unparseName(node[0]), node)
       result.baseType = body
-      result.comment = node.comment
+      if 0 < len(node.comment):
+        result.docs = @[node]
 
     of nkEmpty:
       assert node[0].kind in {nkPragmaExpr}, $treeRepr(nil, node)
       result = newDef(deftMagic, unparseName(node[0]), node)
-      result.comment = node.comment
+      if 0 < len(node.comment):
+        result.docs = @[node]
 
     else:
       echo ">>>> node"
@@ -367,8 +374,7 @@ proc unparseProcDef*(node: PNode): DefTree =
   for arg in node[paramsPos][1..^1]:
     result.arguments.add unparseIdentDefs(arg)
 
-  result.procDocs = getRecComment(node)
-
+  result.docs = getRecComment(node)
 
 proc unparseDefs*(node: PNode): seq[DefTree] =
   case node.kind:

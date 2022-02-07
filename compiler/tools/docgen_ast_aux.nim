@@ -8,7 +8,7 @@ import
   ]
 
 proc failNode*(node: PNode) {.
-    deprecated: "Temporary hack to speed up development",
+    # deprecated: "Temporary hack to speed up development",
     noreturn
   .} =
 

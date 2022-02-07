@@ -11,7 +11,8 @@ import
   ast/[
     ast,
     renderer,
-    lineinfos
+    lineinfos,
+    parser
   ],
   modules/[
     modulegraphs,
@@ -31,7 +32,9 @@ import
   std/[
     tables,
     hashes,
-    strutils
+    strutils,
+    intsets,
+    os
   ]
 
 import std/options as std_options
@@ -50,7 +53,7 @@ type
     docUser: DocEntryId ## Active toplevel user
     declContext: DocDeclarationContext ## Active documentation declaration
     ## context that will be passed to new documentable entry on construction.
-
+    activeModule: DocEntryId
 
 
 iterator visitWhen(visitor: DocVisitor, node: PNode): (DocVisitor, PNode) =
@@ -72,8 +75,20 @@ iterator visitWhen(visitor: DocVisitor, node: PNode): (DocVisitor, PNode) =
       # add it as 'when condition' for the context.
       yield (visitor, branch[0])
 
-proc initDocPart*(example: PNode): DocTextPart =
-  discard
+proc addDocText(db: var DocDb, node: PNode, module: DocEntryId): DocTextId =
+  if node.kind == nkCall:
+    # runnable example
+    result = db.add DocText(
+      isRunnable: true,
+      text: strip($node[^1], chars = {'\n'}),
+      implicit: module,
+      location: db.add nodeLocation(node)
+    )
+
+  else:
+    result = db.add DocText(
+      text: node.comment,
+      location: db.add nodeLocation(node))
 
 proc registerPreUses(
     conf: ConfigRef,
@@ -208,25 +223,18 @@ proc getDeprecated(name: DefName): Option[string] =
     else:
       return some depr[1].getSName()
 
-proc updateCommon(db: var DocDb, id: DocEntryId, decl: DefTree) =
+
+proc updateCommon(
+    db: var DocDb, id: DocEntryId, decl: DefTree, visitor: DocVisitor) =
   ## Update common fields from the unparsed definition tree
   db[id].deprecatedMsg = getDeprecated(decl.name)
   # Store location of the entry declaration
-  db[id].location = some db.add(decl.nameNode().nodeSlice())
+  db[id].location = some db.add(decl.nameNode().nodeLocation())
   # Store full declaration extent
   db[id].extent = some db.add(decl.node().nodeExtent())
 
-  if decl.kind == deftProc:
-    for doc in decl.procDocs:
-      db[id].docText.parts.add:
-        if doc.kind == nkCommentStmt:
-          initDocPart(doc.comment)
-
-        else:
-          initDocPart(doc)
-
-  else:
-    db[id].docText = initDocText(decl.comment)
+  for doc in decl.docs:
+    db[id].docs.add db.addDocText(doc, visitor.activeModule)
 
   if decl.hasSym():
     db[id].sym = decl.sym
@@ -275,7 +283,7 @@ proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntry
       name = argument.getSName()
     )
 
-    db.updateCommon(arg, argument)
+    db.updateCommon(arg, argument, visitor)
     db[arg].argType = argument.typ
     db[arg].argDefault = argument.initExpr
 
@@ -302,7 +310,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
           name = head.getSName()
         )
 
-        db[].updateCommon(result, head)
+        db[].updateCommon(result, head, visitor)
         db[][result].fieldType = head.typ
 
       proc auxField(field: DefField, visitor: DocVisitor): seq[DocEntryId] =
@@ -344,7 +352,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
       # Calling 'updateCommon' can be done multiple times, and here we need
       # it in order to get correct visibility annotations on the enum
       # fields.
-      updateCommon(db, result, decl)
+      updateCommon(db, result, decl, visitor)
 
       for field in decl.enumFields:
         let fId = db.newDocEntry(
@@ -354,7 +362,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
           name = field.getSName()
         )
 
-        db.updateCommon(fId, field)
+        db.updateCommon(fId, field, visitor)
         db[fId].visibility = db[result].visibility
 
         if not field.strOverride.isNil():
@@ -410,7 +418,7 @@ proc registerDeclSection(
           visitor, nodeKind, def.getSName())
 
         db.addSigmap(node[0], doc)
-        db.updateCommon(doc, def)
+        db.updateCommon(doc, def, visitor)
 
     else:
       failNode node
@@ -424,7 +432,7 @@ proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
     of nkProcDeclKinds:
       let def = unparseDefs(node)[0]
       var doc = db.registerProcDef(visitor, def)
-      db.updateCommon(doc, def)
+      db.updateCommon(doc, def, visitor)
       db.addSigmap(node, doc)
 
     of nkTypeSection:
@@ -434,7 +442,7 @@ proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
     of nkTypeDef:
       let def = unparseDefs(node)[0]
       var doc = db.registerTypeDef(visitor, def)
-      db.updateCommon(doc, def)
+      db.updateCommon(doc, def, visitor)
       db.addSigmap(node, doc)
 
     of nkStmtList:
@@ -463,16 +471,11 @@ proc registerTopLevelDoc(
       name = ""
     )
 
-    db[doc].location = some db.add(node.nodeSlice())
+    db[doc].location = some db.add(node.nodeLocation())
+    db[doc].docs.add db.addDocText(node, module)
 
   else:
-    db[module].docText.parts.add:
-      if node.kind == nkCommentStmt:
-        initDocPart(node.comment)
-
-      else:
-        initDocPart(node)
-
+    db[module].docs.add db.addDocText(node, module)
 
 type
   DocPreContext* = ref object of TPassContext
@@ -482,6 +485,7 @@ type
     graph*: ModuleGraph
     docModule*: DocEntryId ## Toplevel entry - module currently being
     ## processed
+    targetFiles*: IntSet
 
   DocContext* = ref object of PContext
     ## Documentation context object that is constructed for each open and close
@@ -491,7 +495,7 @@ type
     ## processing passes, for both pre-sem and in-sem visitation.
     docModule*: DocEntryId ## Toplevel entry - module currently being
     ## processed
-
+    targetFiles*: IntSet
     inModuleBody*: bool
     # Fields to track expansion context
     activeExpansion*: ExpansionId ## Id of the current active expansion.
@@ -502,6 +506,35 @@ type
     ## `db.expansion`
     toplevelExpansions*: seq[ExpansionId] ## List of toplevel macro or
     ## template expansions
+
+func skipFile(ctx: DocContext | DocPreContext, file: FileIndex): bool =
+  if 0 < ctx.targetFiles.len:
+    return file.int notin ctx.targetFiles
+
+proc infoLocation(info: TLineInfo): DocLocation =
+  DocLocation(
+    file: info.fileIndex,
+    line: info.line.int,
+    column: info.col.int..info.col.int
+  )
+
+
+proc initContextCommon(ctx: DocContext | DocPreContext, module: PSym) =
+  let conf = ctx.graph.config
+  var db = ctx.db
+  if conf.docMode in {docOnefile}:
+    let target = toAbsolute(mainCommandArg(conf), conf.projectPath)
+    ctx.targetFiles.incl conf.fileInfoIdx(target).int
+
+  if ctx.docModule.isNil() and not ctx.skipFile(module.info.fileIndex):
+    ctx.docModule = newDocEntry(db, ndkModule, module.name.s)
+    db[ctx.docModule].location = some db.add(infoLocation(module.info))
+
+    db[ctx.docModule].visibility = dvkPublic
+    db.sigmap[module] = ctx.docModule
+
+
+
 
 proc `[]`*(ctx: DocContext, n: PType | PNode | PSym): DocEntryId = ctx.db[n]
 
@@ -583,42 +616,112 @@ type
     ## for the semantic pass.
     db: DocDb
 
-let preSemPass = makePass(
-  TPassOpen(
-    proc(
-      graph: ModuleGraph, module: PSym, idgen: IdGenerator
-    ): PPassContext {.nimcall.} =
-      var db = DocBackend(graph.backend).db
-      return DocPreContext(
-        graph: graph,
-        db: db,
-        docModule: db.newDocEntry(ndkModule, module.name.s)
-      )
-  ),
-  TPassProcess(
-    proc(c: PPassContext, n: PNode): PNode {.nimcall.} =
-      var ctx = DocPreContext(c)
-      assert not ctx.db.isNil()
-      var visitor = DocVisitor()
-      visitor.docUser = ctx.docModule
-      visitor.parent = some ctx.docModule
-      visitor.declContext.preSem = true
 
-      # Perform initial registration of all the entries in the code -
-      # this one excludes all macro-generated ones, but includes
-      # conditionally enabled elements.
-      registerTopLevel(ctx.db, visitor, n)
+proc docPreSemOpen(graph: ModuleGraph, module: PSym, idgen: IdGenerator): PPassContext {.nimcall.} =
+  var db = DocBackend(graph.backend).db
+  let pre = DocPreContext(graph: graph, db: db)
+  pre.initContextCommon(module)
+  return pre
 
-      registerPreUses(ctx.graph.config, ctx.db, visitor, n)
+proc docPreSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
+  var ctx = DocPreContext(c)
+  if ctx.skipFile(n.info.fileIndex):
+    return
 
-      result = n
-  ),
-  TPassClose(
-    proc(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
-      # Pre-sem documenter does not have any special 'close' actions for now
-      discard
-  ),
-  isFrontend = true)
+  assert not ctx.db.isNil()
+  var visitor = DocVisitor()
+  visitor.docUser = ctx.docModule
+  visitor.parent = some ctx.docModule
+  visitor.declContext.preSem = true
+
+  # Perform initial registration of all the entries in the code -
+  # this one excludes all macro-generated ones, but includes
+  # conditionally enabled elements.
+  registerTopLevel(ctx.db, visitor, n)
+
+  registerPreUses(ctx.graph.config, ctx.db, visitor, n)
+
+  result = n
+
+proc docPreSemClose(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
+  # Pre-sem documenter does not have any special 'close' actions for now
+  discard
+
+proc docInSemOpen(
+    graph: ModuleGraph, module: PSym, idgen: IdGenerator): PPassContext {.nimcall.} =
+  var back = DocBackend(graph.backend)
+  var db = back.db
+
+  var ctx = DocContext(
+    db: db,
+    docModule: db[module],
+    resolveHook:  SemResolveHook(resolve),
+    expandHooks: (
+      preMacro:         SemExpandHook(preExpand),
+      preMacroResem:    SemExpandHook(preResem),
+      postMacro:        SemExpandHook(postExpand),
+      preTemplate:      SemExpandHook(preExpand),
+      preTemplateResem: SemExpandHook(preResem),
+      postTemplate:     SemExpandHook(postExpand)))
+  ctx = DocContext(newContext(graph, module, ctx))
+
+  ctx.initContextCommon(module)
+
+  return semPassSetupOpen(ctx, graph, module, idgen)
+
+proc docInSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
+  result = semPassProcess(c, n)
+  var ctx = DocContext(c)
+  if ctx.skipFile(n.info.fileIndex):
+    return
+
+  let conf = ctx.graph.config
+
+  var db = ctx.db
+  var visitor = DocVisitor()
+
+  visitor.docUser = ctx.docModule
+  visitor.parent = some ctx.docModule
+  visitor.activeModule = ctx.docModule
+
+  assert not db.isNil()
+
+  if isDocumentationNode(n):
+    # Registering toplevel documentation elements for module only in
+    # the post-sem analysis, since documentation is not subject to
+    # conditional compile-time hiding (supposedly. And if it is then
+    # it most likely is the author's intention. Althoug this
+    # assumption can certainly be revised later on).
+    registerTopLevelDoc(
+      db, ctx.docModule, n, ctx.inModuleBody)
+
+  elif n.kind == nkDiscardStmt:
+    # Ignoring toplevel discard statements - the can be used as an
+    # old-style comments, or be a testament spec (test files can also
+    # have toplevel documentation)
+    discard
+
+  else:
+    # Register toplevel declaration entries generated in the code,
+    # excluding ones that were generated as a result of macro
+    # expansions.
+    registerTopLevel(db, visitor, result)
+    ctx.inModuleBody = false
+    # Register immediate uses of the macro expansions
+    var state = initRegisterState()
+    state.moduleId = ctx.docModule
+    registerUses(db, result, state)
+
+proc docInSemClose(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
+  result = semPassClose(graph, p, n)
+  var ctx = DocContext(p)
+  # Add information about known macro expansions that were processed
+  # during compilation
+  ctx.db.toplevelExpansions.add((ctx.docModule, ctx.toplevelExpansions))
+
+
+  
+
 
 proc setupDocPasses(graph: ModuleGraph): DocDb =
   ## Setup necessary documentation pass context for module graph.
@@ -628,85 +731,47 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
 
   graph.backend = back
 
-  if false:
-    registerPass(graph, preSemPass)
+  let preSemPass = makePass(
+    TPassOpen(docPreSemOpen),
+    TPassProcess(docPreSemProcess),
+    TPassClose(docPreSemClose),
+    isFrontend = true)
 
-  # Documentation pass /extends/ the semantic pass, so we are adding it directly
-  # after 'pre-sem'
-  registerPass(graph, makePass(
-    TPassOpen(
-      proc(
-        graph: ModuleGraph, module: PSym, idgen: IdGenerator
-      ): PPassContext {.nimcall.} =
-        var back = DocBackend(graph.backend)
+  let inSemPass = makePass(
+    TPassOpen(docInSemOpen),
+    TPassProcess(docInSemProcess),
+    TPassClose(docInSemClose),
+    isFrontend = true)
 
-        var ctx = DocContext(
-          db: back.db,
-          docModule: back.db[module],
-          resolveHook:  SemResolveHook(resolve),
-          expandHooks: (
-            preMacro:         SemExpandHook(preExpand),
-            preMacroResem:    SemExpandHook(preResem),
-            postMacro:        SemExpandHook(postExpand),
-            preTemplate:      SemExpandHook(preExpand),
-            preTemplateResem: SemExpandHook(preResem),
-            postTemplate:     SemExpandHook(postExpand)))
 
-        if ctx.docModule.isNil():
-          ctx.docModule = newDocEntry(back.db, ndkModule, module.name.s)
+  case graph.config.docMode:
+    of docDefault, docOnefile:
+      registerPass(graph, inSemPass)
 
-        ctx = DocContext(newContext(graph, module, ctx))
-        ctx.db[ctx.docModule].visibility = dvkPublic
-        back.db.sigmap[module] = ctx.docModule
+    of docUntyped:
+      registerPass(graph, preSemPass)
 
-        return semPassSetupOpen(ctx, graph, module, idgen)
-    ),
-    TPassProcess(
-      proc(c: PPassContext, n: PNode): PNode {.nimcall.} =
-        result = semPassProcess(c, n)
-        var ctx = DocContext(c)
-        var visitor = DocVisitor()
+    of docUntypedOnefile:
+      # Documenting single file entry, without system module
+      let
+        conf = graph.config
+        file = addFileExt(AbsoluteFile mainCommandArg(conf), NimExt)
+        idx = conf.fileInfoIdx(file)
 
-        visitor.docUser = ctx.docModule
-        visitor.parent = some ctx.docModule
+      let context = DocPreContext(
+        graph: graph,
+        db: back.db,
+        docModule: back.db.newDocEntry(
+          ndkFile, conf[idx].projPath.string)
+      )
 
-        assert not ctx.db.isNil()
-
-        if isDocumentationNode(n):
-          # Registering toplevel documentation elements for module only in
-          # the post-sem analysis, since documentation is not subject to
-          # conditional compile-time hiding (supposedly. And if it is then
-          # it most likely is the author's intention. Althoug this
-          # assumption can certainly be revised later on).
-          registerTopLevelDoc(
-            ctx.db, ctx.docModule, n, ctx.inModuleBody)
-
-        elif n.kind == nkDiscardStmt:
-          # Ignoring toplevel discard statements - the can be used as an
-          # old-style comments, or be a testament spec (test files can also
-          # have toplevel documentation)
-          discard
-
-        else:
-          # Register toplevel declaration entries generated in the code,
-          # excluding ones that were generated as a result of macro
-          # expansions.
-          registerTopLevel(ctx.db, visitor, result)
-          ctx.inModuleBody = false
-          # Register immediate uses of the macro expansions
-          var state = initRegisterState()
-          state.moduleId = ctx.docModule
-          registerUses(ctx.db, result, state)
-    ),
-    TPassClose(
-      proc(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
-        result = semPassClose(graph, p, n)
-        var ctx = DocContext(p)
-        # Add information about known macro expansions that were processed
-        # during compilation
-        ctx.db.toplevelExpansions.add((ctx.docModule, ctx.toplevelExpansions))
-    ),
-    isFrontend = true))
+      for statement in parseString(
+        readFile(file.string),
+        cache = graph.cache,
+        config = conf,
+        filename = file.string
+      ):
+        discard docPreSemProcess(context, statement)
 
   return back.db
 
@@ -812,6 +877,7 @@ proc commandDoc3*(graph: ModuleGraph, ext: string) =
   ## Execute documentation generation command for module graph
   let db = setupDocPasses(graph)
   compileProject(graph)
+
   echo "Compiled documentation generator project"
 
   graph.config.writeFlatDump(db)

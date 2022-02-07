@@ -208,7 +208,7 @@ proc splitOn*(base, sep: DocLocation):
     if base.column.a < sep.column.a:
       # [base text  ... (anything)]
       #          < [separator text]
-      result.before = some initDocSlice(
+      result.before = some initDocLocation(
         base.line, base.column.a, sep.column.a - 1, base.file)
 
     elif base.column.a == sep.column.a:
@@ -220,7 +220,7 @@ proc splitOn*(base, sep: DocLocation):
     if sep.column.b < base.column.b:
       # [... (anything)  base text]
       # [separator text] <
-      result.after = some initDocSlice(
+      result.after = some initDocLocation(
         base.line, sep.column.b + 1, base.column.b, base.file)
 
     elif sep.column.b == base.column.b:
@@ -232,9 +232,9 @@ proc splitOn*(base, sep: DocLocation):
 
 
 
-proc nodeSlice*(node: PNode): DocLocation =
+proc nodeLocation*(node: PNode): DocLocation =
   let l = len($node)
-  initDocSlice(
+  initDocLocation(
     node.info.line.int,
     node.info.col.int,
     node.info.col.int + l - 1,
@@ -243,7 +243,7 @@ proc nodeSlice*(node: PNode): DocLocation =
 
 proc nodeExprSlice(node: PNode): DocLocation =
   ## Return source code slice for `node`.
-  result = nodeSlice(node)
+  result = nodeLocation(node)
   case node.kind:
     of nkDotExpr:
       result -= len($node[0]) - 1
@@ -314,7 +314,7 @@ proc occur*(
   ): DocOccurId =
 
   var occur = DocOccur(
-    user: user, kind: kind, loc: db.add(nodeSlice(node)))
+    user: user, kind: kind, loc: db.add(nodeLocation(node)))
 
   if kind in dokLocalKinds:
     assert false, "Unexpected kind for occur " & $kind
@@ -348,7 +348,7 @@ proc occur*(
   ): DocOccurId =
   ## Construct new docmentable entry occurence and return new ID
   var occur = DocOccur(
-    kind: kind, user: user, loc: db.add(nodeSlice(node)))
+    kind: kind, user: user, loc: db.add(nodeLocation(node)))
 
   occur.refid = id
   return db.add occur
@@ -363,7 +363,7 @@ proc occur*(
   ## Construct new occurence of the local documentable entry and return the
   ## resulting ID
   var occur = DocOccur(
-    kind: kind, loc: db.add(nodeSlice(node)))
+    kind: kind, loc: db.add(nodeLocation(node)))
 
   occur.localId = localid
   occur.withInit = withInit
