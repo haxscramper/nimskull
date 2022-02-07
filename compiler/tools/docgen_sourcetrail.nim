@@ -2,13 +2,17 @@ import
   std/[
     sequtils,
     with,
-    tables
+    tables,
+    os
   ],
   ast/[
     lineinfos
   ],
   front/[
     options,
+  ],
+  utils/[
+    pathutils
   ],
   ./docgen_types
 
@@ -251,6 +255,14 @@ proc toRange(fileId: cint, codeRange: DocCodeLocation): SourcetrailSourceRange =
     startColumn = codeRange.column.a.cint + 1
     endColumn = codeRange.column.b.cint + 1
 
+proc toRange(fileId: cint, extent: DocExtent): SourcetrailSourceRange =
+  with result:
+    fileId = fileId
+    startLine = extent.start.line.cint
+    startColumn = extent.start.column.cint + 1
+    endLine = extent.finish.line.cint
+    endColumn = extent.finish.column.cint + 1
+
 proc getFile(writer: var SourcetrailDBWriter, path, lang: string): cint =
   result = writer.recordFile(path)
   discard writer.recordFileLanguage(result, lang)
@@ -265,7 +277,7 @@ proc registerUses*(
     writer: var SourcetrailDBWriter, idMap: IdMap, db: DocDb) =
   var lastDeclare: DocOccurKind
   for id, occur in db.occurencies:
-    let fileId = idMap.fileToTrail[occur.slice.file]
+    let fileId = idMap.fileToTrail[db[occur.slice].file]
 
     var userId: cint
     if occur.user.isSome():
@@ -274,7 +286,7 @@ proc registerUses*(
     if occur.kind in dokLocalKinds:
       discard writer.recordLocalSymbolLocation(
         writer.recordLocalSymbol(occur.localId),
-        toRange(fileId, occur.slice))
+        toRange(fileId, db[occur.slice]))
 
     elif occur.kind in {
       dokObjectDeclare, dokCallDeclare,
@@ -285,7 +297,7 @@ proc registerUses*(
       userId = idMap.docToTrail[occur.refid]
       lastDeclare = occur.kind
       discard writer.recordSymbolLocation(
-        userId, toRange(fileId, occur.slice))
+        userId, toRange(fileId, db[occur.slice]))
 
     elif occur.kind in {dokImported}:
       when false:
@@ -372,7 +384,7 @@ proc registerUses*(
         userId, targetId, useKind)
 
       discard writer.recordReferenceLocation(
-        refSym, toRange(fileId, occur.slice))
+        refSym, toRange(fileId, db[occur.slice]))
 
 iterator parents(db: DocDb, id: DocEntryId): DocEntryId =
   var buf: seq[DocEntryId] = @[id]
@@ -444,49 +456,44 @@ proc registerDb*(writer: var SourcetrailDBWriter, idMap: IdMap, db: DocDb): IdMa
     result.docToTrail[id] = writer.recordSymbol(name, defKind)
 
     if entry.location.isSome():
-      let loc = entry.location.get()
-      let fileId = idMap.fileToTrail[loc.fileIndex]
+      let loc = db[entry.location.get()]
+      let fileId = idMap.fileToTrail[loc.file]
       let symId = writer.recordSymbol(name, defKind)
-
       result.docToTrail[id] = symId
+      let extent = toRange(fileId, loc)
+      discard writer.recordSymbolLocation(symId, extent)
 
-      if entry.declHeadExtent.isSome():
-        let extent = toRange(fileId, entry.declHeadExtent.get())
-        discard writer.recordSymbolLocation(symId, extent)
+      if entry.kind notin {ndkModule, ndkFile}:
         discard writer.recordSymbolScopeLocation(symId, extent)
 
-      elif entry.kind == ndkModule:
-        let extent = toRange(fileId, initDocSlice(1, 0, 0))
-        discard writer.recordSymbolLocation(symId, extent)
 
+proc open*(writer: var SourcetrailDBWriter, file: AbsoluteFile) =
+  discard writer.open(file.string)
 
+proc registerFiles*(writer: var SourcetrailDBWriter, conf: ConfigRef): IdMap =
+  assert false, "TODO"
 
-
-proc open*(writer; file: AbsFile) = discard writer.open(file.string)
-
-proc registerFullDb*(writer; db: DocDb) =
+proc registerFullDb*(conf: ConfigRef, writer: var SourcetrailDBWriter, db: DocDb) =
   discard writer.beginTransaction()
-  let idMap = writer.registerDb(db)
+  let idMap = writer.registerDb(writer.registerFiles(conf), db)
   discard writer.commitTransaction()
 
-  for file in db.files:
-    discard writer.beginTransaction()
-    writer.registerUses(file, idMap, db)
-    discard writer.commitTransaction()
+  discard writer.beginTransaction()
+  writer.registerUses(idMap, db)
+  discard writer.commitTransaction()
 
 const
   sourcetrailDbExt* = "srctrldb"
   sourcetrailProjectExt* = "srctrlprj"
 
 
-proc writeDbSourcetrail*(db: DocDb, outFile: AbsFile) =
-  var writer: SourcetrailDbWriter
-  let outFile = outFile.withExt(sourcetrailDbExt)
-  assertExists outFile.dir()
-  rmFile outFile
+
+proc writeSourcetrail*(conf: ConfigRef, db: DocDb, outFile: AbsoluteFile) =
+  var writer: SourcetrailDBWriter
+  let outFile = outFile.changeFileExt(sourcetrailDbExt)
+  assert existsDir parentDir(outFile.string), outFile.string
+  removeFile outFile.string
   writer.open(outFile)
-  registerFullDb(writer, db)
+  registerFullDb(conf, writer, db)
   discard writer.close()
 
-proc writeSourcetrailDb*(db: DocDb, outFile: AbsFile) {.deprecated.} =
-  writeDbSourcetrail(db, outFile)

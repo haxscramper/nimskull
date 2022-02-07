@@ -53,6 +53,8 @@ type
     declContext: DocDeclarationContext ## Active documentation declaration
     ## context that will be passed to new documentable entry on construction.
 
+
+
 iterator visitWhen(visitor: DocVisitor, node: PNode): (DocVisitor, PNode) =
   ## Iterate over all branches in 'when' statement, yielding new visitor
   ## object with updated 'when' conditions.
@@ -208,13 +210,17 @@ proc getDeprecated(name: DefName): Option[string] =
     else:
       return some depr[1].getSName()
 
-proc updateCommon(entry: var DocEntry, decl: DefTree) =
+proc updateCommon(db: var DocDb, id: DocEntryId, decl: DefTree) =
   ## Update common fields from the unparsed definition tree
-  entry.deprecatedMsg = getDeprecated(decl.name)
-  entry.location = some decl.nameNode().info
+  db[id].deprecatedMsg = getDeprecated(decl.name)
+  # Store location of the entry declaration
+  db[id].location = some db.add(decl.nameNode().nodeSlice())
+  # Store full declaration extent
+  db[id].extent = some db.add(decl.node().nodeExtent())
+
   if decl.kind == deftProc:
     for doc in decl.procDocs:
-      entry.docText.parts.add:
+      db[id].docText.parts.add:
         if doc.kind == nkCommentStmt:
           initDocPart(doc.comment)
 
@@ -222,13 +228,13 @@ proc updateCommon(entry: var DocEntry, decl: DefTree) =
           initDocPart(doc)
 
   else:
-    entry.docText = initDocText(decl.comment)
+    db[id].docText = initDocText(decl.comment)
 
   if decl.hasSym():
-    entry.sym = decl.sym
+    db[id].sym = decl.sym
 
   if decl.exported:
-    entry.visibility = dvkPublic
+    db[id].visibility = dvkPublic
 
 
 proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntryId =
@@ -271,7 +277,7 @@ proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntry
       name = argument.getSName()
     )
 
-    db[arg].updateCommon(argument)
+    db.updateCommon(arg, argument)
     db[arg].argType = argument.typ
     db[arg].argDefault = argument.initExpr
 
@@ -298,7 +304,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
           name = head.getSName()
         )
 
-        db[][result].updateCommon(head)
+        db[].updateCommon(result, head)
         db[][result].fieldType = head.typ
 
       proc auxField(field: DefField, visitor: DocVisitor): seq[DocEntryId] =
@@ -340,7 +346,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
       # Calling 'updateCommon' can be done multiple times, and here we need
       # it in order to get correct visibility annotations on the enum
       # fields.
-      updateCommon(db[result], decl)
+      updateCommon(db, result, decl)
 
       for field in decl.enumFields:
         let fId = db.newDocEntry(
@@ -350,7 +356,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
           name = field.getSName()
         )
 
-        db[fId].updateCommon(field)
+        db.updateCommon(fId, field)
         db[fId].visibility = db[result].visibility
 
         if not field.strOverride.isNil():
@@ -406,7 +412,7 @@ proc registerDeclSection(
           visitor, nodeKind, def.getSName())
 
         db.addSigmap(node[0], doc)
-        db[doc].updateCommon(def)
+        db.updateCommon(doc, def)
 
     else:
       failNode node
@@ -420,7 +426,7 @@ proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
     of nkProcDeclKinds:
       let def = unparseDefs(node)[0]
       var doc = db.registerProcDef(visitor, def)
-      db[doc].updateCommon(def)
+      db.updateCommon(doc, def)
       db.addSigmap(node, doc)
 
     of nkTypeSection:
@@ -430,7 +436,7 @@ proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
     of nkTypeDef:
       let def = unparseDefs(node)[0]
       var doc = db.registerTypeDef(visitor, def)
-      db[doc].updateCommon(def)
+      db.updateCommon(doc, def)
       db.addSigmap(node, doc)
 
     of nkStmtList:
@@ -459,7 +465,7 @@ proc registerTopLevelDoc(
       name = ""
     )
 
-    db[doc].location = some node.info
+    db[doc].location = some db.add(node.nodeSlice())
 
   else:
     db[module].docText.parts.add:
@@ -468,6 +474,38 @@ proc registerTopLevelDoc(
 
       else:
         initDocPart(node)
+
+
+type
+  DocPreContext* = ref object of TPassContext
+    ## Initial documntation analysis context that constructs a list of potential
+    ## documentable entries using pre-sem visitation.
+    db*: DocDb
+    graph*: ModuleGraph
+    docModule*: DocEntryId ## Toplevel entry - module currently being
+    ## processed
+
+  DocContext* = ref object of PContext
+    ## Documentation context object that is constructed for each open and close
+    ## operation. This documentation further elaborates on analysis of the daa
+
+    db*: DocDb ## Documentation database that is persistent across all
+    ## processing passes, for both pre-sem and in-sem visitation.
+    docModule*: DocEntryId ## Toplevel entry - module currently being
+    ## processed
+
+    inModuleBody*: bool
+    # Fields to track expansion context
+    activeExpansion*: ExpansionId ## Id of the current active expansion.
+    ## Points to valid one only if the expansion stack is not empty,
+    ## otherwise stores the information about the last expansion.
+    expansionStack*: seq[ExpansionId] ## Intermediate location for
+    ## expansion data store - when expansion is closed it is moved to
+    ## `db.expansion`
+    toplevelExpansions*: seq[ExpansionId] ## List of toplevel macro or
+    ## template expansions
+
+proc `[]`*(ctx: DocContext, n: PType | PNode | PSym): DocEntryId = ctx.db[n]
 
 func expandCtx(ctx: DocContext): int =
   ctx.expansionStack.len
@@ -660,7 +698,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
           # Register immediate uses of the macro expansions
           var state = initRegisterState()
           state.moduleId = ctx.docModule
-          ctx.registerUses(result, state)
+          registerUses(ctx.db, result, state)
     ),
     TPassClose(
       proc(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
@@ -668,8 +706,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
         var ctx = DocContext(p)
         # Add information about known macro expansions that were processed
         # during compilation
-        registerExpansions(ctx)
-
+        ctx.db.toplevelExpansions.add((ctx.docModule, ctx.toplevelExpansions))
     ),
     isFrontend = true))
 
@@ -705,7 +742,7 @@ proc writeEtags*(conf: ConfigRef, db: DocDb, file: AbsoluteFile) =
   for id, entry in db.entries:
     if entry.kind notin ndkOnlyNested and entry.location.isSome():
       perFile.mgetOrPut(
-        entry.location.get().fileIndex, DocEntrySet()).incl id
+        db[entry.location.get()].file, DocEntrySet()).incl id
 
   for id, file in conf.m.fileInfos:
     # etags require actual parts of the source code to be present and
@@ -728,19 +765,19 @@ proc writeEtags*(conf: ConfigRef, db: DocDb, file: AbsoluteFile) =
       # `patterntag ::= pattern DEL [ tagname SOH ] position`
       # `position ::= realposition | ","`
       # `realposition ::= "," unsint | unsint "," | unsint "," unsint`
-      let loc = db[id].location.get()
+      let loc = db[db[id].location.get()]
       tagfile.write(
         # `pattern DEl`. In that canse pattern is a piece of code that
         # emacs will progressively try to search in the target file, so
         # instead of trying to reconstruct all possible prefixes on all
         # possible indentation levels just reusing original source code
         # here.
-        conf.m.fileInfos[loc.fileIndex.int32].lines[loc.line - 1], DEL,
+        conf[loc.file].lines[loc.line - 1], DEL,
         # `tagname SOH` - tagname will displayed in the emacs, so rendering
         # actual signature here.
         db.fullName(id), SOH,
         # `position -> realposition -> unsint "," unsint`
-        loc.line, ",", loc.col
+        loc.line, ",", loc.column
       )
 
   close(tagfile)
@@ -762,13 +799,12 @@ proc writeJsonLines*(conf: ConfigRef, db: DocDb) =
       res["deprecated"] = %entry.deprecatedMsg.get()
 
     if entry.location.isSome():
-      let loc = entry.location.get()
+      let loc = db[entry.location.get()]
       res["location"] = %*{
-        "file": conf.toMsgFilename(loc.fileIndex),
+        "file": conf.toMsgFilename(loc.file),
         "line": $loc.line,
-        "col": $loc.col
+        "col": $loc.column
       }
-
 
     jfile.writeLine($res)
 

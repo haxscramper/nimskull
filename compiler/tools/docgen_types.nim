@@ -170,6 +170,9 @@ const
 declareIdType(Expansion, addHash = true)
 declareIdType(DocOccur, addHash = true)
 declareIdType(DocEntry, addHash = true)
+declareIdType(DocCodeLocation, addHash = true)
+declareIdType(DocExtent, addHash = true)
+
 
 type
   Expansion* = object
@@ -195,7 +198,14 @@ type
     line*: int ## Code slice line /index/
     column*: Slice[int] ## Column slice - start and stop position
 
+  DocExtent* = object
+    file*: FileIndex
+    start*, finish*: tuple[line, column: int]
 
+declareStoreType(DocCodeLocation)
+declareStoreType(DocExtent)
+
+type
   DocOccur* = object
     ## Single occurence of documentable entry. When DOD AST and token
     ## storage is implemented
@@ -207,7 +217,7 @@ type
     ## identifier (for local variables, arguments etc).
     inExpansionOf*: Option[ExpansionId]
 
-    slice*: DocCodeLocation ## Position of the occurence in the project
+    slice*: DocCodeLocationId ## Position of the occurence in the project
     ## files.
     node*: PNode ## Node that occurence happened in. In the future this
     ## should be converted to node IDs
@@ -261,9 +271,6 @@ type
     entries*: seq[DocEntryId]
     nested*: seq[DocEntryGroup]
 
-  DocExtent* = object
-    start*: TLineInfo
-    finish*: TLineInfo
 
   DocTextPart* = object
     ## Single chunk of documentation text, can be either source code, or
@@ -312,12 +319,10 @@ type
     node*: PNode ## Node that documentable entry was generated from
 
     context*: DocDeclarationContext
-    location*: Option[TLineInfo]
-    extent*: Option[DocExtent]
-    declHeadExtent*: Option[DocExtent] ## Source code extent for
+    extent*: Option[DocExtentId]
+    location*: Option[DocCodeLocationId] ## Source code extent for
     ## documentable entry 'head'. Points to single identifier - entry name
     ## in declaration.
-    ## - WHY :: Used in sourcetrail
     nested*: seq[DocEntryId] ## Nested documentable entries. Use to store
     ## information about fields of a type (for variant fields this might have
     ## more nested fields), arguments of a procedure, enum values and so on.
@@ -404,43 +409,24 @@ type
     top*: seq[DocEntryId]
     named*: Table[string, DocEntryId]
     expandedNodes*: Table[int, ExpansionId]
+    extents*: DocExtentStore
+    locations*: DocCodeLocationStore
     expansions*: ExpansionStore ## List of known expansion bettween
     ## open/close for module
     occurencies*: DocOccurStore
     sigmap*: Table[PSym, DocEntryId]
+    toplevelExpansions*: seq[tuple[
+      module: DocEntryId, expansions: seq[ExpansionId]]] ## List of
+    ## toplevel macro or template expansions
 
-  DocPreContext* = ref object of TPassContext
-    ## Initial documntation analysis context that constructs a list of potential
-    ## documentable entries using pre-sem visitation.
-    db*: DocDb
-    graph*: ModuleGraph
-    docModule*: DocEntryId ## Toplevel entry - module currently being
-    ## processed
 
-  DocContext* = ref object of PContext
-    ## Documentation context object that is constructed for each open and close
-    ## operation. This documentation further elaborates on analysis of the daa
-
-    db*: DocDb ## Documentation database that is persistent across all
-    ## processing passes, for both pre-sem and in-sem visitation.
-    docModule*: DocEntryId ## Toplevel entry - module currently being
-    ## processed
-
-    inModuleBody*: bool
-    # Fields to track expansion context
-    activeExpansion*: ExpansionId ## Id of the current active expansion.
-    ## Points to valid one only if the expansion stack is not empty,
-    ## otherwise stores the information about the last expansion.
-    expansionStack*: seq[ExpansionId] ## Intermediate location for
-    ## expansion data store - when expansion is closed it is moved to
-    ## `db.expansion`
-    toplevelExpansions*: seq[ExpansionId] ## List of toplevel macro or
-    ## template expansions that were registered in the module
 
 # DOD helper function declarations for the documentable entry database.
 declareStoreField(DocDb, entries, DocEntry)
 declareStoreField(DocDb, expansions, Expansion)
 declareStoreField(DocDb, occurencies, DocOccur)
+declareStoreField(DocDb, locations, DocCodeLocation)
+declareStoreField(DocDb, extents, DocExtent)
 
 func add*(de: var DocEntry, id: DocEntryId) =
   de.nested.add id
@@ -584,8 +570,8 @@ proc `$`*(db: DocDb, id: DocEntryId): string =
     r.add &" parent [{e().parent.get.int}]"
 
   if e().location.isSome():
-    let l = e().location.get()
-    r.add &" in {l.fileIndex.int}({l.line}, {l.col})"
+    let l = db[e().location.get()]
+    r.add &" in {l.file.int}({l.line}, {l.column})"
 
   if e().context.preSem:
     r.add " (presem)"
@@ -612,3 +598,14 @@ proc `$`*(db: DocDb, id: DocEntryId): string =
     r.add "'"
 
   return r
+
+proc initDocSlice*(
+    line, startCol, endCol: int, file: FileIndex): DocCodeLocation =
+  if endCol == -1:
+    DocCodeLocation(
+      line: line, column: Slice[int](a: -1, b: -1), file: file)
+
+  else:
+    assert startCol <= endCol, &"{startCol} <= {endCol}"
+    DocCodeLocation(
+      line: line, column: Slice[int](a: startCol, b: endCol), file: file)

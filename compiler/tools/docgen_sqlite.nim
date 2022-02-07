@@ -182,9 +182,10 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
         bindParam(3, entry.kind)
 
       if loc.isSome():
-        prep.bindParam(4, loc.get().fileIndex)
-        prep.bindParam(5, loc.get().line)
-        prep.bindParam(6, loc.get().col)
+        let loc = db[loc.get()]
+        prep.bindParam(4, loc.file)
+        prep.bindParam(5, loc.line)
+        prep.bindParam(6, loc.column.a)
 
       else:
         prep.bindNull(4)
@@ -204,7 +205,7 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
   })):
     for id, occur in db.occurencies:
       if occur.kind notin dokLocalKinds:
-        let s = occur.slice
+        let s = db[occur.slice]
         with prep:
           bindParam(1, id)
           bindParam(2, occur.kind)

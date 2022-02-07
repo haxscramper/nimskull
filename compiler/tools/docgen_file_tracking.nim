@@ -168,15 +168,14 @@ proc sigHash(t: PSym): SigHash =
   result = t.trySigHash()
 
 
-proc contains*(ctx: DocContext, ntype: PType | PNode | PSym): bool =
-  ntype.headSym() in ctx.db.sigmap
+proc contains*(db: DocDb, ntype: PType | PNode | PSym): bool =
+  ntype.headSym() in db.sigmap
 
 proc `[]`*(db: DocDb, ntype: PType | PNode | PSym): DocEntryId =
   let sym = headSym(ntype)
   if not sym.isNil() and sym in db.sigmap:
     return db.sigmap[sym]
 
-proc `[]`*(ctx: DocContext, n: PType | PNode | PSym): DocEntryId = ctx.db[n]
 
 proc contains(s1, s2: DocCodeLocation): bool =
   s1.line == s2.line and
@@ -199,17 +198,6 @@ func `[]`*[R1, R2](slice: DocCodeLocation, split: HSlice[R1, R2]): DocCodeLocati
 func `-=`*(slice: var DocCodeLocation, shift: int) =
   slice.column.a -= shift
   slice.column.b -= shift
-
-proc initDocSlice*(
-    line, startCol, endCol: int, file: FileIndex): DocCodeLocation =
-  if endCol == -1:
-    DocCodeLocation(
-      line: line, column: Slice[int](a: -1, b: -1), file: file)
-
-  else:
-    assert startCol <= endCol, &"{startCol} <= {endCol}"
-    DocCodeLocation(
-      line: line, column: Slice[int](a: startCol, b: endCol), file: file)
 
 proc splitOn*(base, sep: DocCodeLocation):
   tuple[before, after: Option[DocCodeLocation]] =
@@ -315,8 +303,10 @@ proc finishPos*(node: PNode): TLineInfo =
         result = node.info
 
 proc nodeExtent*(node: PNode): DocExtent =
-  result.start = startPos(node)
-  result.finish = finishPos(node)
+  let (start, finish) = (startPos(node), finishPos(node))
+  result.file = start.fileIndex
+  result.start = (start.line.int, start.col.int)
+  result.finish = (finish.line.int, finish.col.int)
 
 proc occur*(
     db: var DocDb,
@@ -325,7 +315,9 @@ proc occur*(
     user: Option[DocEntryId]
   ): DocOccurId =
 
-  var occur = DocOccur(user: user, kind: kind, slice: nodeSlice(node))
+  var occur = DocOccur(
+    user: user, kind: kind, slice: db.add(nodeSlice(node)))
+
   if kind in dokLocalKinds:
     assert false, "Unexpected kind for occur " & $kind
 
@@ -343,7 +335,9 @@ proc occur*(
     user: Option[DocEntryId] = none DocEntryId
   ): DocOccurId =
   ## Construct new docmentable entry occurence and return new ID
-  var occur = DocOccur(kind: kind, user: user, slice: parent.subslice(node))
+  var occur = DocOccur(
+    kind: kind, user: user, slice: db.add(parent.subslice(node)))
+
   occur.refid = id
   return db.add occur
 
@@ -355,7 +349,9 @@ proc occur*(
     user: Option[DocEntryId] = none DocEntryId
   ): DocOccurId =
   ## Construct new docmentable entry occurence and return new ID
-  var occur = DocOccur(kind: kind, user: user, slice: nodeSlice(node))
+  var occur = DocOccur(
+    kind: kind, user: user, slice: db.add(nodeSlice(node)))
+
   occur.refid = id
   return db.add occur
 
@@ -368,7 +364,9 @@ proc occur*(
   ): DocOccurId =
   ## Construct new occurence of the local documentable entry and return the
   ## resulting ID
-  var occur = DocOccur(kind: kind, slice: nodeSlice(node))
+  var occur = DocOccur(
+    kind: kind, slice: db.add(nodeSlice(node)))
+
   occur.localId = localid
   occur.withInit = withInit
 

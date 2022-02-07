@@ -151,12 +151,12 @@ proc exprTypeSym(n: PNode): PSym =
 
 
 proc registerProcBody(
-    ctx: DocContext, body: PNode, state: RegisterState, node: PNode) =
+    db: var DocDb, body: PNode, state: RegisterState, node: PNode) =
   let s = node[0].headSym()
-  if isNil(s) or isNil(ctx[s]):
+  if isNil(s) or isNil(db[s]):
     return
 
-  var main = ctx.db[ctx[s]]
+  var main = db[db[s]]
   let
     decl = s.ast
     prag = decl[pragmasPos]
@@ -167,20 +167,20 @@ proc registerProcBody(
     for r in mainRaise:
       let sym = exprTypeSym(r)
       if not sym.isNil():
-        main.raises.incl ctx[sym]
+        main.raises.incl db[sym]
         let callSym = headSym(r)
         if not isNil(callSym) and callSym.kind in skProcDeclKinds:
           # For `openarray[T]` `headSym` returns type symbol, but we are only
           # concerned with calls to other procedures here.
-          main.raisesVia[ctx[callSym]] = DocEntrySet()
+          main.raisesVia[db[callSym]] = DocEntrySet()
 
   if not mainEffect.isNil:
     for e in mainEffect:
-      main.effects.incl ctx[exprTypeSym(e)]
+      main.effects.incl db[exprTypeSym(e)]
 
       let callSym = headSym(e)
       if not isNil(callSym) and callSym.kind in skProcDeclKinds:
-        main.effectsVia[ctx[callSym]] = DocEntrySet()
+        main.effectsVia[db[callSym]] = DocEntrySet()
 
   let icpp = effectSpec(prag, {wImportc, wImportCpp, wImportJs, wImportObjC})
   if not icpp.isNil():
@@ -190,7 +190,7 @@ proc registerProcBody(
   if not dyn.isNil():
     main.dynlibOf = some dyn[0].getSName()
 
-  proc aux(node: PNode) =
+  proc aux(node: PNode, db: var DocDb) =
     case node.kind:
       of nkTokenKinds - {nkSym}:
         discard
@@ -198,47 +198,47 @@ proc registerProcBody(
       of nkCall, nkCommand:
         let head = node[0].headSym()
         if not isNil(head):
-          main.calls.incl ctx[head]
+          main.calls.incl db[head]
           let raises = head.effectSpec(wRaises)
           if not raises.isEmptyTree():
             for r in raises:
-              let id = ctx[r]
+              let id = db[r]
               if not isNil(id) and id in main.raisesVia:
-                main.raisesVia[id].incl ctx[head]
+                main.raisesVia[id].incl db[head]
 
           let effects = head.effectSpec(wTags)
           if not effects.isNil():
             for e in effects:
-              let id = ctx[e]
+              let id = db[e]
               if not isNil(id):
                 main.effectsVia.mgetOrPut(id, DocEntrySet()).incl id
 
         for sub in node:
-          aux(sub)
+          aux(sub, db)
 
       of nkRaiseStmt:
         if node[0].kind != nkEmpty and not isNil(node[0].typ):
           let et = node[0].typ.skipTypes(skipPtrs)
           if not isNil(et.sym):
-            main.raisesDirect.incl ctx[et.sym]
+            main.raisesDirect.incl db[et.sym]
 
       of nkSym:
         case node.sym.kind:
           of skVar, skLet:
-            main.globalIO.incl ctx[node.sym]
+            main.globalIO.incl db[node.sym]
 
           else:
             discard
 
       else:
         for sub in node:
-          aux(sub)
+          aux(sub, db)
 
-  aux(body)
+  aux(body, db)
 
 
 proc registerSymbolUse(
-    ctx: DocContext,
+    db: var DocDb,
     node: PNode,
     state: RegisterState,
     parent: PNode
@@ -246,11 +246,10 @@ proc registerSymbolUse(
 
   assert node.kind == nkSym
 
-  var db = ctx.db
   case node.sym.kind:
     of skType:
       if state.top() == rskExport:
-        db[state.moduleId].exports.incl ctx[node]
+        db[state.moduleId].exports.incl db[node]
 
       else:
         let useKind =
@@ -275,7 +274,7 @@ proc registerSymbolUse(
 
         discard db.occur(node, useKind, state.user)
         if useKind in {dokEnumDeclare, dokObjectDeclare, dokAliasDeclare}:
-          result = some ctx[node]
+          result = some db[node]
 
     of skEnumField:
       if state.top() == rskEnumFields:
@@ -286,7 +285,7 @@ proc registerSymbolUse(
 
     of skField:
       if not node.sym.owner.isNil():
-        let id = ctx[node.sym.owner]
+        let id = db[node.sym.owner]
         if not id.isNil():
           let field = db.getSub(id, $node)
           discard db.occur(
@@ -295,23 +294,23 @@ proc registerSymbolUse(
     of skProcDeclKinds:
       if state.top() == rskProcHeader:
         discard db.occur(node, dokCallDeclare, state.user)
-        result = some ctx[node]
+        result = some db[node]
 
       elif state.top() == rskExport:
-        db[state.moduleId].exports.incl ctx[node]
+        db[state.moduleId].exports.incl db[node]
 
       else:
         discard db.occur(node, dokCall, state.user)
 
     of skParam, skVar, skConst, skLet, skForVar:
       let sym = node.headSym()
-      if sym in ctx:
+      if sym in db:
         if state.top() == rskAsgn:
           discard db.occur(node, dokGlobalWrite, state.user)
 
         elif state.top() == rskTopLevel:
           discard db.occur(node, dokGlobalDeclare, state.user)
-          result = some ctx[sym]
+          result = some db[sym]
 
         else:
           discard db.occur(
@@ -347,10 +346,10 @@ proc registerSymbolUse(
       discard db.occur(node, dokImported, some(state.moduleId))
       case state.top():
         of rskImport:
-          db[state.moduleId].imports.incl ctx[node]
+          db[state.moduleId].imports.incl db[node]
 
         of rskExport:
-          db[state.moduleId].exports.incl ctx[node]
+          db[state.moduleId].exports.incl db[node]
 
         of rskCallHead:
           # `module.proc`
@@ -363,20 +362,18 @@ proc registerSymbolUse(
 
 
 proc impl(
-    ctx: DocContext,
+    db: var DocDb,
     node: PNode,
     state: RegisterState,
     parent: PNode
   ): Option[DocEntryId] {.discardable.} =
 
-  if ctx.db.isFromMacro(node) and not state.allowMacroNodes:
+  if db.isFromMacro(node) and not state.allowMacroNodes:
     return
-
-  var db = ctx.db
 
   case node.kind:
     of nkSym:
-      result = registerSymbolUse(ctx, node, state, parent)
+      result = registerSymbolUse(db, node, state, parent)
 
     of nkIdent:
       if not state.switchId.isNil():
@@ -410,7 +407,7 @@ proc impl(
          not isNil(node.typ.sym) and
          not isNil(node.typ.sym.ast):
 
-        let parent = ctx[node.typ.sym]
+        let parent = db[node.typ.sym]
         if node.typ.sym.ast.isEnum():
           if not parent.isNil():
             let sub = db.getSub(parent, $node)
@@ -418,29 +415,29 @@ proc impl(
 
 
     of nkPragmaExpr:
-      result = ctx.impl(node[0], state, node)
-      ctx.impl(node[1], state + rskPragma + result, node)
+      result = db.impl(node[0], state, node)
+      db.impl(node[1], state + rskPragma + result, node)
 
     of nkIdentDefs, nkConstDef:
       var state = state
       state.hasInit = isEmptyTree(node[2])
-      result = ctx.impl(node[0], state, node) # Variable declaration
-      ctx.impl(node[1], state + result, node)
-      ctx.impl(node[2], state + result, node)
+      result = db.impl(node[0], state, node) # Variable declaration
+      db.impl(node[1], state + result, node)
+      db.impl(node[2], state + result, node)
 
     of nkImportStmt:
       for subnode in node:
-        ctx.impl(subnode, state + rskImport, node)
+        db.impl(subnode, state + rskImport, node)
 
     of nkIncludeStmt:
       for subnode in node:
-        ctx.impl(subnode, state + rskInclude, node)
+        db.impl(subnode, state + rskInclude, node)
 
     of nkExportStmt:
       # QUESTION not really sure what `export` should be mapped to, so
       # discarding for now.
       for subnode in node:
-        ctx.impl(subnode, state + rskExport, node)
+        db.impl(subnode, state + rskExport, node)
 
     of nkGenericParams:
       # TODO create context with generic parameters declared in
@@ -450,7 +447,7 @@ proc impl(
     of nkPragma:
       # TODO implement for pragma uses
       for subnode in node:
-        result = ctx.impl(subnode, state + rskPragma, node)
+        result = db.impl(subnode, state + rskPragma, node)
 
     of nkAsmStmt:
       # IDEA possible analysis of passthrough code?
@@ -458,55 +455,55 @@ proc impl(
 
     of nkCall, nkConv:
       if node.kind == nkCall and "defined" in $node:
-        ctx.impl(node[1], state + rskDefineCheck, node)
+        db.impl(node[1], state + rskDefineCheck, node)
 
       else:
         for idx, subnode in node:
           if idx == 0:
-            ctx.impl(subnode, state + rskCallHead, node)
+            db.impl(subnode, state + rskCallHead, node)
 
           else:
-            ctx.impl(subnode, state, node)
+            db.impl(subnode, state, node)
 
     of nkProcDeclKinds:
-      result = ctx.impl(node[0], state + rskProcHeader, node)
+      result = db.impl(node[0], state + rskProcHeader, node)
       # IDEA process TRM macros/pattern susing different state constraints.
-      ctx.impl(node[1], state + rskProcHeader + result, node)
-      ctx.impl(node[2], state + rskProcHeader + result, node)
-      ctx.impl(node[3][0], state + rskProcReturn + result, node)
+      db.impl(node[1], state + rskProcHeader + result, node)
+      db.impl(node[2], state + rskProcHeader + result, node)
+      db.impl(node[3][0], state + rskProcReturn + result, node)
       for n in node[3][1 ..^ 1]:
-        ctx.impl(n, state + rskProcArgs + result, node)
+        db.impl(n, state + rskProcArgs + result, node)
 
-      ctx.impl(node[4], state + rskProcHeader + result, node)
-      ctx.impl(node[5], state + rskProcHeader + result, node)
+      db.impl(node[4], state + rskProcHeader + result, node)
+      db.impl(node[5], state + rskProcHeader + result, node)
 
-      ctx.impl(node[6], state + result, node)
+      db.impl(node[6], state + result, node)
 
-      ctx.registerProcBody(node[6], state, node)
+      db.registerProcBody(node[6], state, node)
 
     of nkBracketExpr:
-      ctx.impl(node[0], state + rskBracketHead, node)
+      db.impl(node[0], state + rskBracketHead, node)
       for subnode in node[1..^1]:
-        ctx.impl(subnode, state + rskBracketArgs, node)
+        db.impl(subnode, state + rskBracketArgs, node)
 
     of nkRecCase:
       var state = state
-      state.switchId = ctx[node[0][1]]
-      ctx.impl(node[0], state + rskObjectBranch, node)
+      state.switchId = db[node[0][1]]
+      db.impl(node[0], state + rskObjectBranch, node)
       for branch in node[1 .. ^1]:
         for expr in branch[0 .. ^2]:
-          ctx.impl(expr, state + rskObjectBranch, node)
+          db.impl(expr, state + rskObjectBranch, node)
 
-        ctx.impl(branch[^1], state + rskObjectFields, node)
+        db.impl(branch[^1], state + rskObjectFields, node)
 
     of nkRaiseStmt:
       # TODO get type of the raised expression and if it is a concrete type
       # record `dokRaised` usage.
       for subnode in node:
-        ctx.impl(subnode, state, node)
+        db.impl(subnode, state, node)
 
     of nkOfInherit:
-      ctx.impl(node[0], state + rskInheritList, node)
+      db.impl(node[0], state + rskInheritList, node)
 
     of nkOpenSymChoice:
       # QUESTION I have no idea what multiple symbol choices mean *after*
@@ -520,24 +517,24 @@ proc impl(
         else:                  rskTypeHeader
 
       var state = state
-      result = ctx.impl(node[0], state + decl, node)
+      result = db.impl(node[0], state + decl, node)
       if state.user.isNone():
         state.user = result
 
-      ctx.impl(node[1], state + decl + result, node)
-      ctx.impl(node[2], state + result, node)
+      db.impl(node[1], state + decl + result, node)
+      db.impl(node[2], state + result, node)
 
     of nkDistinctTy:
       if node.safeLen > 0:
-        ctx.impl(node[0], state, node)
+        db.impl(node[0], state, node)
 
     of nkAsgn:
-      result = ctx.impl(node[0], state + rskAsgn, node)
+      result = db.impl(node[0], state + rskAsgn, node)
       if result.isSome():
-        ctx.impl(node[1], state + result.get(), node)
+        db.impl(node[1], state + result.get(), node)
 
       else:
-        ctx.impl(node[1], state, node)
+        db.impl(node[1], state, node)
 
     of nkObjConstr:
       if node[0].kind != nkEmpty and not isNil(node[0].typ):
@@ -551,9 +548,9 @@ proc impl(
               discard db.occur(
                 field, fieldPair, fieldId, dokFieldSet, state.user)
 
-      ctx.impl(node[0], state, node)
+      db.impl(node[0], state, node)
       for subnode in node[1 ..^ 1]:
-        ctx.impl(subnode[1], state, node)
+        db.impl(subnode[1], state, node)
 
     else:
       var state = state
@@ -568,11 +565,11 @@ proc impl(
           discard
 
       for subnode in node:
-        ctx.impl(subnode, state, node)
+        db.impl(subnode, state, node)
 
 
-proc registerUses*(ctx: DocContext, node: PNode, state: RegisterState) =
-  discard impl(ctx, node, state, nil)
+proc registerUses*(db: var DocDb, node: PNode, state: RegisterState) =
+  discard impl(db, node, state, nil)
 
 type
   CodeWriter = object
@@ -709,8 +706,8 @@ proc writeCode(
   nl()
 
 
-proc registerExpansions*(ctx: DocContext) =
-  var db = ctx.db
+proc registerExpansions*(db: var DocDb) =
   var writer = CodeWriter()
-  for expand in ctx.toplevelExpansions:
-    db.writeCode(expand, writer)
+  for (module, expansions) in db.toplevelExpansions:
+    for expand in expansions:
+      db.writeCode(expand, writer)
