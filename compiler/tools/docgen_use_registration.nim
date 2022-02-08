@@ -2,7 +2,8 @@ import
   ./docgen_types,
   ./docgen_file_tracking,
   ./docgen_unparser,
-  ./docgen_code_renderer
+  ./docgen_code_renderer,
+  ./docgen_ast_aux
 
 import
   ast/[
@@ -23,6 +24,35 @@ import
 import std/options as std_options
 
 type
+  DocVisitor* = object
+    parent*: Option[DocEntryId]
+    docUser*: DocEntryId ## Active toplevel user
+    declContext*: DocDeclarationContext ## Active documentation declaration
+    ## context that will be passed to new documentable entry on construction.
+    activeModule*: DocEntryId
+
+
+iterator visitWhen*(visitor: DocVisitor, node: PNode): (DocVisitor, PNode) =
+  ## Iterate over all branches in 'when' statement, yielding new visitor
+  ## object with updated 'when' conditions.
+  var conditions: seq[PNode]
+  for branch in node:
+    var visitor = visitor
+    if branch.kind == nkElifBranch:
+      # defensive tree copy here in order to avoid sem modifying the data
+      # later on
+      let cp = branch[0].copyTree()
+      visitor.declContext.whenConditions.add cp
+      conditions.add cp
+      yield (visitor, branch[1])
+
+    else:
+      # TODO construct inverted condition from all branches seen earlier,
+      # add it as 'when condition' for the context.
+      yield (visitor, branch[0])
+
+
+type
   RegisterStateKind = enum
     rskTopLevel
     rskInheritList
@@ -39,9 +69,11 @@ type
     rskTypeHeader
     rskAliasHeader
     rskEnumHeader
+    rskTypeName
 
     rskDefineCheck
-    rskAsgn
+    rskAsgnTo
+    rskAsgnFrom
     rskCallHead
 
     rskImport
@@ -52,7 +84,9 @@ type
   RegisterState = object
     state: seq[RegisterStateKind]
     switchId: DocEntryId
+    localUser: Option[DocEntryId]
     moduleId*: DocEntryId
+    visitor: DocVisitor
     user: Option[DocEntryId]
     hasInit: bool
     allowMacroNodes: bool ## Allow to record information about usages in
@@ -84,6 +118,23 @@ proc `+=`(state: var RegisterState, kind: RegisterStateKind) =
 
 proc top(state: RegisterState): RegisterStateKind =
   return state.state[^1]
+
+proc hasAll(state: RegisterState, kinds: set[RegisterStateKind]): bool =
+  for kind in kinds:
+    var has = false
+    if kind in state.state:
+      has = true
+
+    if not has:
+      return false
+
+  return true
+
+proc hasAny(state: RegisterState, kinds: set[RegisterStateKind]): bool =
+  for part in state.state:
+    if part in kinds:
+      return true
+
 
 proc initRegisterState*(): RegisterState =
   RegisterState(state: @[rskTopLevel])
@@ -192,7 +243,13 @@ proc registerProcBody(
 
       of nkCall, nkCommand:
         let head = node[0].headSym()
-        if not isNil(head):
+        if not isNil(head) and head in db:
+          # HACK - I don't understand /why/ node with symbols is not
+          # registered in the database. First time when I encountered this
+          # was `iterators_1.dotdotImpl` call to `inc(res)` - in that case
+          # `inc`'s symbol was `module:2 item:1975`, but at the time of
+          # definition it was `module:2 item:272`. Symbol location was the
+          # same in both cases.
           main.calls.incl db[head]
           let raises = head.effectSpec(wRaises)
           if not raises.isEmptyTree():
@@ -231,6 +288,11 @@ proc registerProcBody(
 
   aux(body, db)
 
+proc occur(
+    db: var DocDb, node: PNode, kind: DocOccurKind, state: RegisterState
+  ): DocOccurId =
+  db.occur(node, kind, state.user, state.localUser)
+
 
 proc registerSymbolUse(
     db: var DocDb,
@@ -249,7 +311,9 @@ proc registerSymbolUse(
       else:
         let useKind =
           case state.top():
-            of rskTopLevel, rskPragma, rskAsgn:  dokTypeDirectUse
+            of rskTopLevel, rskPragma, rskAsgnTo, rskAsgnFrom, rskTypeName:
+              dokTypeDirectUse
+
             of rskObjectFields, rskObjectBranch: dokTypeAsFieldUse
             of rskProcArgs, rskProcHeader:       dokTypeAsArgUse
 
@@ -267,16 +331,34 @@ proc registerSymbolUse(
             of rskDefineCheck: dokDefineCheck
             of rskEnumFields:  dokNone
 
-        discard db.occur(node, useKind, state.user)
+        if node notin db and state.hasAny({rskProcReturn, rskProcArgs}):
+          discard
+          # `proc createU*(T: typedesc, size = 1.Positive): ptr T` - `T` is
+          # a `skParam, module:2 item:1788` at the start and
+          # `skType, itemId: module:2 item:1791` later on. Completely different
+          # symbols, I don't think this is even possible to properly trace down.
+        else:
+          discard db.occur(node, useKind, state)
+
         if useKind in {dokEnumDeclare, dokObjectDeclare, dokAliasDeclare}:
           result = some db[node]
 
     of skEnumField:
+      let sym = node.sym
+      if sym notin db:
+        # For some unknown reason when enum declaration is seen by the
+        # entry registration it still has `nkIdent` for field defintions,
+        # and those are not registered in sigmap. This code is a HACK, but
+        # I don't want to dive into debugging sem right now, so ...
+        let sub = db.getSub(db[sym.owner], $node) # Get owner entry ID from
+        # symbol and get it's nested entry by name.
+        db.addSigmap(sym, sub) # Add symbol to sigmap
+
       if state.top() == rskEnumFields:
-        discard db.occur(node, dokEnumFieldDeclare, state.user)
+        discard db.occur(node, dokEnumFieldDeclare, state)
 
       else:
-        discard db.occur(node, dokEnumFieldUse, state.user)
+        discard db.occur(node, dokEnumFieldUse, state)
 
     of skField:
       if not node.sym.owner.isNil():
@@ -284,49 +366,71 @@ proc registerSymbolUse(
         if not id.isNil():
           let field = db.getSub(id, $node)
           discard db.occur(
-            node, parent, field, dokFieldUse, state.user)
+            node, parent, field, dokFieldUse,
+            state.user, state.localUser)
 
     of skProcDeclKinds:
-      if state.top() == rskProcHeader:
-        discard db.occur(node, dokCallDeclare, state.user)
+      if node.sym notin db:
+        discard "FIXME find why called /symbol/ is not registered in the DB"
+
+      elif state.top() == rskProcHeader:
+        discard db.occur(node, dokCallDeclare, state)
         result = some db[node]
 
       elif state.top() == rskExport:
         db[state.moduleId].exports.incl db[node]
 
       else:
-        discard db.occur(node, dokCall, state.user)
+        discard db.occur(node, dokCall, state)
 
     of skParam, skVar, skConst, skLet, skForVar:
-      let sym = node.headSym()
-      if sym in db:
-        if state.top() == rskAsgn:
-          discard db.occur(node, dokGlobalWrite, state.user)
+      if state.hasAll({rskTypeName}):
+        # We are in the type name in one of the arguments or field
+        # elements. The only place where it can happen is a callback
+        # (field, variable or argument)
+        return
 
-        elif state.top() == rskTopLevel:
-          discard db.occur(node, dokGlobalDeclare, state.user)
-          result = some db[sym]
+      var kind = dokNone
+      case state.top():
+        of rskAsgnTo:
+          kind = dokVarWrite
+
+        of rskAsgnFrom, rskBracketHead, rskBracketArgs:
+          # `<??> = varSymbol`, `varSymbol[<??>]`, `??[varSymbol]`
+          kind = dokVarRead
+
+        of rskTopLevel:
+          kind = dokGlobalVarDecl
+
+        of rskProcArgs, rskProcReturn, rskProcHeader:
+          if state.hasAll({rskTypeName}):
+            # Use template/argument as a return type in a different context.
+            #
+            # template dotdotImpl(t) {.dirty.} =
+            #   iterator `..`*(a, b: t): t {.inline.} =
+            #
+            # TemplateDef 0
+            # 0 Sym 1 dotdotImpl sk:Template
+            #     db entry: [1820]: private template 'dotdotImpl(t: )' parent [1] in 11(100, 9 .. 18)
+            # 3 FormalParams 4
+            #   1 IdentDefs 6
+            #     0 Sym 7 t sk:Param
+            #         db entry: [1821]: private arg 't' parent [1820] in 11(100, 20 .. 20)
+            # 6 StmtList 13
+            #   0 IteratorDef 14
+            #     3 FormalParams 21
+            #       0 Sym 22 t sk:Param
+            #           db entry: [1821]: private arg 't' parent [1820] in 11(100, 20 .. 20)
+            kind = dokParametrizationWithArg
+
+          else:
+            kind = dokLocalArgDecl
+
 
         else:
-          discard db.occur(
-            node, dokGlobalRead, state.user)
+          assert false, $state.top() & $treeRepr(nil, node)
 
-      else:
-        let (kind, ok) =
-          case state.top():
-            of rskAsgn:                    (dokLocalWrite, true)
-            of rskProcHeader, rskProcArgs: (dokLocalArgDecl, true)
-            of rskObjectFields, rskProcReturn:
-              # Local callback parameters or fields in return `tuple`
-              # values.
-              (dokLocalWrite, false)
-
-            else:
-              (dokLocalUse, true)
-
-        if ok:
-          discard db.occur(
-            node, kind, $node.headSym(), state.hasInit)
+      discard db.occur(node, kind, state)
 
     of skResult:
       # IDEA can be used to collect information about `result` vs
@@ -338,25 +442,26 @@ proc registerSymbolUse(
       discard # ???
 
     of skModule:
-      discard db.occur(node, dokImported, some(state.moduleId))
-      case state.top():
-        of rskImport:
-          db[state.moduleId].imports.incl db[node]
+      if false:
+        discard db.occur(node, dokImported, state)
+        case state.top():
+          of rskImport:
+            db[state.moduleId].imports.incl db[node]
 
-        of rskExport:
-          db[state.moduleId].exports.incl db[node]
+          of rskExport:
+            db[state.moduleId].exports.incl db[node]
 
-        of rskCallHead:
-          # `module.proc`
-          discard
+          of rskCallHead:
+            # `module.proc`
+            discard
 
-        else:
-          assert false, $state.top()
-
-
+          else:
+            assert false, $state.top()
 
 
-proc impl(
+
+
+proc reg(
     db: var DocDb,
     node: PNode,
     state: RegisterState,
@@ -374,19 +479,23 @@ proc impl(
       if not state.switchId.isNil():
         let sub = db.getSub(state.switchId, $node)
         if not sub.isNil():
-          discard db.occur(node, sub, dokEnumFieldUse, state.user)
+          discard db.occur(
+            node, sub, dokEnumFieldUse, state.user, state.localUser)
 
       elif state.top() == rskDefineCheck:
         let def = db.getOrNewNamed(ndkCompileDefine, $node)
-        discard db.occur(node, def, dokDefineCheck, state.user)
+        discard db.occur(
+          node, def, dokDefineCheck, state.user, state.localUser)
 
       elif state.top() == rskPragma:
         let def = db.getOrNewNamed(ndkPragma, $node)
-        discard db.occur(node, def, dokAnnotationUsage, state.user)
+        discard db.occur(
+          node, def, dokAnnotationUsage, state.user, state.localUser)
 
       elif state.top() == rskObjectFields:
         let def = db.getSub(state.user.get, $node)
-        discard db.occur(node, def, dokFieldDeclare, state.user)
+        discard db.occur(
+          node, def, dokFieldDeclare, state.user, state.localUser)
 
     of nkCommentStmt,
        nkEmpty,
@@ -406,33 +515,41 @@ proc impl(
         if node.typ.sym.ast.isEnum():
           if not parent.isNil():
             let sub = db.getSub(parent, $node)
-            discard db.occur(node, sub, dokEnumFieldUse, state.user)
+            discard db.occur(
+              node, sub, dokEnumFieldUse, state.user, state.localUser)
 
 
     of nkPragmaExpr:
-      result = db.impl(node[0], state, node)
-      db.impl(node[1], state + rskPragma + result, node)
+      result = db.reg(node[0], state, node)
+      db.reg(node[1], state + rskPragma + result, node)
 
     of nkIdentDefs, nkConstDef:
       var state = state
-      state.hasInit = isEmptyTree(node[2])
-      result = db.impl(node[0], state, node) # Variable declaration
-      db.impl(node[1], state + result, node)
-      db.impl(node[2], state + result, node)
+      state.hasInit = not isEmptyTree(node[2])
+
+      for ident in node[0 .. ^3]:
+        # Variable declaration
+        result = db.reg(ident, state + rskAsgnTo, node)
+
+      # Adding `result` to the state so we can register use of type /by/ a
+      # variable
+      db.reg(node[^2], state + rskTypeName + result, node)
+      # Use if expression by a variable
+      db.reg(node[^1], state + result + rskAsgnFrom, node)
 
     of nkImportStmt:
       for subnode in node:
-        db.impl(subnode, state + rskImport, node)
+        db.reg(subnode, state + rskImport, node)
 
     of nkIncludeStmt:
       for subnode in node:
-        db.impl(subnode, state + rskInclude, node)
+        db.reg(subnode, state + rskInclude, node)
 
     of nkExportStmt:
       # QUESTION not really sure what `export` should be mapped to, so
       # discarding for now.
       for subnode in node:
-        db.impl(subnode, state + rskExport, node)
+        db.reg(subnode, state + rskExport, node)
 
     of nkGenericParams:
       # TODO create context with generic parameters declared in
@@ -442,7 +559,7 @@ proc impl(
     of nkPragma:
       # TODO implement for pragma uses
       for subnode in node:
-        result = db.impl(subnode, state + rskPragma, node)
+        result = db.reg(subnode, state + rskPragma, node)
 
     of nkAsmStmt:
       # IDEA possible analysis of passthrough code?
@@ -450,55 +567,63 @@ proc impl(
 
     of nkCall, nkConv:
       if node.kind == nkCall and "defined" in $node:
-        db.impl(node[1], state + rskDefineCheck, node)
+        db.reg(node[1], state + rskDefineCheck, node)
 
       else:
         for idx, subnode in node:
           if idx == 0:
-            db.impl(subnode, state + rskCallHead, node)
+            db.reg(subnode, state + rskCallHead, node)
 
           else:
-            db.impl(subnode, state, node)
+            db.reg(subnode, state, node)
 
     of nkProcDeclKinds:
-      result = db.impl(node[0], state + rskProcHeader, node)
+      result = db.reg(node[0], state + rskProcHeader, node)
+      let sym = node[0].headSym()
+      if not sym.isNil() and sym notin db and state.user.isSome():
+        discard db.newDocEntry(
+          kind = ndkProc,
+          name = sym,
+          parent = state.user.get()
+        )
+
       # IDEA process TRM macros/pattern susing different state constraints.
-      db.impl(node[1], state + rskProcHeader + result, node)
-      db.impl(node[2], state + rskProcHeader + result, node)
-      db.impl(node[3][0], state + rskProcReturn + result, node)
+      db.reg(node[1], state + rskProcHeader + result, node)
+      db.reg(node[2], state + rskProcHeader + result, node)
+      db.reg(node[3][0], state + rskProcReturn + result, node)
       for n in node[3][1 ..^ 1]:
-        db.impl(n, state + rskProcArgs + result, node)
+        db.reg(n, state + rskProcArgs + result, node)
 
-      db.impl(node[4], state + rskProcHeader + result, node)
-      db.impl(node[5], state + rskProcHeader + result, node)
+      db.reg(node[4], state + rskProcHeader + result, node)
+      db.reg(node[5], state + rskProcHeader + result, node)
 
-      db.impl(node[6], state + result, node)
+      db.reg(node[6], state + result, node)
 
       db.registerProcBody(node[6], state, node)
 
     of nkBracketExpr:
-      db.impl(node[0], state + rskBracketHead, node)
+      db.reg(node[0], state + rskBracketHead, node)
       for subnode in node[1..^1]:
-        db.impl(subnode, state + rskBracketArgs, node)
+        db.reg(subnode, state + rskBracketArgs, node)
 
     of nkRecCase:
       var state = state
       state.switchId = db[node[0][1]]
-      db.impl(node[0], state + rskObjectBranch, node)
+      db.reg(node[0], state + rskObjectBranch, node)
       for branch in node[1 .. ^1]:
         for expr in branch[0 .. ^2]:
-          db.impl(expr, state + rskObjectBranch, node)
+          db.reg(expr, state + rskObjectBranch, node)
 
-        db.impl(branch[^1], state + rskObjectFields, node)
+        db.reg(branch[^1], state + rskObjectFields, node)
 
     of nkRaiseStmt:
       # TODO get type of the raised expression and if it is a concrete type
       # record `dokRaised` usage.
       for subnode in node:
-        db.impl(subnode, state, node)
+        db.reg(subnode, state, node)
 
     of nkOfInherit:
-      db.impl(node[0], state + rskInheritList, node)
+      db.reg(node[0], state + rskInheritList, node)
 
     of nkOpenSymChoice:
       # QUESTION I have no idea what multiple symbol choices mean *after*
@@ -512,24 +637,30 @@ proc impl(
         else:                  rskTypeHeader
 
       var state = state
-      result = db.impl(node[0], state + decl, node)
+      result = db.reg(node[0], state + decl, node)
       if state.user.isNone():
         state.user = result
 
-      db.impl(node[1], state + decl + result, node)
-      db.impl(node[2], state + result, node)
+      db.reg(node[1], state + decl + result, node)
+      if decl == rskAliasHeader:
+        # Not an `object` or `enum` declaration - that leaves only typedef,
+        # and typedef RHS is a type name (or several type names)
+        db.reg(node[2], state + result + rskTypeName, node)
+
+      else:
+        db.reg(node[2], state + result, node)
 
     of nkDistinctTy:
       if node.safeLen > 0:
-        db.impl(node[0], state, node)
+        db.reg(node[0], state, node)
 
     of nkAsgn:
-      result = db.impl(node[0], state + rskAsgn, node)
+      result = db.reg(node[0], state + rskAsgnTo, node)
       if result.isSome():
-        db.impl(node[1], state + result.get(), node)
+        db.reg(node[1], state + result.get() + rskAsgnFrom, node)
 
       else:
-        db.impl(node[1], state, node)
+        db.reg(node[1], state + rskAsgnFrom, node)
 
     of nkObjConstr:
       if node[0].kind != nkEmpty and not isNil(node[0].typ):
@@ -543,28 +674,33 @@ proc impl(
               discard db.occur(
                 field, fieldPair, fieldId, dokFieldSet, state.user)
 
-      db.impl(node[0], state, node)
+      db.reg(node[0], state, node)
       for subnode in node[1 ..^ 1]:
-        db.impl(subnode[1], state, node)
+        db.reg(subnode[1], state, node)
+
+    of nkRecWhen:
+      for (visitor, body) in visitWhen(state.visitor, node):
+        var state = state
+        state.visitor = visitor
+        db.reg(body, state, node)
+
+    of nkPostfix:
+      db.reg(node[1], state, node)
 
     else:
       var state = state
       case node.kind:
-        of nkEnumTy:
-          state += rskEnumFields
-
-        of nkObjectTy, nkRecList:
-          state += rskObjectFields
-
-        else:
-          discard
+        of nkEnumTy: state += rskEnumFields
+        of nkObjectTy, nkRecList: state += rskObjectFields
+        else: discard
 
       for subnode in node:
-        db.impl(subnode, state, node)
+        # debug node
+        db.reg(subnode, state, node)
 
 
 proc registerUses*(db: var DocDb, node: PNode, state: RegisterState) =
-  discard impl(db, node, state, nil)
+  discard reg(db, node, state, nil)
 
 type
   CodeWriter = object
@@ -651,8 +787,7 @@ proc writeCode(
             if not id.isNil():
               let ocId = db.occur(
                 node = node,
-                kind = dokInMacroExpansion,
-                user = none DocEntryId
+                kind = dokInMacroExpansion
               )
 
               db[ocId].inExpansionOf = some expand

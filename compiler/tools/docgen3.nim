@@ -34,7 +34,6 @@ import
     hashes,
     strutils,
     intsets,
-    os
   ]
 
 import std/options as std_options
@@ -47,33 +46,6 @@ static:
 
 
 
-type
-  DocVisitor = object
-    parent: Option[DocEntryId]
-    docUser: DocEntryId ## Active toplevel user
-    declContext: DocDeclarationContext ## Active documentation declaration
-    ## context that will be passed to new documentable entry on construction.
-    activeModule: DocEntryId
-
-
-iterator visitWhen(visitor: DocVisitor, node: PNode): (DocVisitor, PNode) =
-  ## Iterate over all branches in 'when' statement, yielding new visitor
-  ## object with updated 'when' conditions.
-  var conditions: seq[PNode]
-  for branch in node:
-    var visitor = visitor
-    if branch.kind == nkElifBranch:
-      # defensive tree copy here in order to avoid sem modifying the data
-      # later on
-      let cp = branch[0].copyTree()
-      visitor.declContext.whenConditions.add cp
-      conditions.add cp
-      yield (visitor, branch[1])
-
-    else:
-      # TODO construct inverted condition from all branches seen earlier,
-      # add it as 'when condition' for the context.
-      yield (visitor, branch[0])
 
 proc addDocText(db: var DocDb, node: PNode, module: DocEntryId): DocTextId =
   if node.kind == nkCall:
@@ -139,7 +111,7 @@ proc newDocEntry(
     db: var DocDb,
     visitor: DocVisitor,
     kind: DocEntryKind,
-    name: string
+    name: PNode
   ): DocEntryId =
 
   if visitor.parent.isSome():
@@ -157,7 +129,7 @@ proc newDocEntry(
     visitor: DocVisitor,
     parent: DocEntryId,
     kind: DocEntryKind,
-    name: string
+    name: PNode
   ): DocEntryId =
 
   db.newDocEntry(
@@ -247,10 +219,7 @@ proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntry
   ## Register new procedure definition in the documentation database,
   ## return constructed entry
   result = db.newDocEntry(
-    visitor,
-    db.classifyDeclKind(def),
-    def.getSName()
-  )
+    visitor, db.classifyDeclKind(def), def.nameNode())
 
   let name = def.getSName()
   var pkind: DocProcKind
@@ -280,20 +249,42 @@ proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntry
       visitor = visitor,
       parent = result,
       kind = ndkArg,
-      name = argument.getSName()
+      name = argument.nameNode()
     )
 
     db.updateCommon(arg, argument, visitor)
     db[arg].argType = argument.typ
     db[arg].argDefault = argument.initExpr
 
+  let parent = result
+  proc aux(node: PNode, db: var DocDb) =
+    if db.isFromMacro(node):
+      return
+
+    case node.kind:
+      of nkSym:
+        if node.sym.kind in {skGenericParam, skVar, skLet, skConst, skForVar}:
+          var declKind = ndkVar
+          if node.sym.kind in {skGenericParam}:
+            declKind = ndkParam
+
+          let local = db.newDocEntry(parent, declKind, node)
+
+          db[local].location = some db.add(node.nodeLocation())
+          db.addSigmap(node, local)
+
+      else:
+        for sub in node:
+          aux(sub, db)
+
+  aux(def.node[bodyPos], db)
+  aux(def.node[genericParamsPos], db)
+
 proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntryId =
   case decl.kind:
     of deftObject:
       result = db.newDocEntry(
-        visitor,
-        db.classifyDeclKind(decl),
-        decl.getSName())
+        visitor, db.classifyDeclKind(decl), decl.nameNode())
 
       let objId = result
       var db = addr db
@@ -307,7 +298,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
           visitor = visitor,
           parent = objId,
           kind = ndkField,
-          name = head.getSName()
+          name = head.nameNode()
         )
 
         db[].updateCommon(result, head, visitor)
@@ -348,7 +339,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
 
 
     of deftEnum:
-      result = db.newDocEntry(visitor, ndkEnum, decl.getSName())
+      result = db.newDocEntry(visitor, ndkEnum, decl.nameNode())
       # Calling 'updateCommon' can be done multiple times, and here we need
       # it in order to get correct visibility annotations on the enum
       # fields.
@@ -359,7 +350,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
           visitor = visitor,
           parent = result,
           kind = ndkEnumField,
-          name = field.getSName()
+          name = field.nameNode()
         )
 
         db.updateCommon(fId, field, visitor)
@@ -375,14 +366,14 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
       result = db.newDocEntry(
         visitor,
         db.classifyDeclKind(decl),
-        decl.getSName()
+        decl.nameNode()
       )
 
       db[result].baseType = decl.baseType
 
     of deftMagic:
       result = db.newDocEntry(
-        visitor, ndkBuiltin, decl.getSName())
+        visitor, ndkBuiltin, decl.nameNode())
 
     else:
       assert false, $decl.kind
@@ -415,14 +406,19 @@ proc registerDeclSection(
         let nodeKind = tern(0 < len(pragma), ndkCompileDefine, nodeKind)
 
         var doc = db.newDocEntry(
-          visitor, nodeKind, def.getSName())
+          visitor, nodeKind, def.nameNode())
 
-        db.addSigmap(node[0], doc)
         db.updateCommon(doc, def, visitor)
 
     else:
       failNode node
 
+
+proc registerGenericParams(db: var DocDb, def: DefTree, user: DocEntryId) =
+  for (name, constraint) in def.genericParams:
+    discard db.newDocEntry(user, ndkParam, name)
+    # echo "[[REGISTERED GENERIC PARAM]]"
+    # debug name, implicitTReprConf + trfPackedFields
 
 proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
   if db.isFromMacro(node):
@@ -433,7 +429,7 @@ proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
       let def = unparseDefs(node)[0]
       var doc = db.registerProcDef(visitor, def)
       db.updateCommon(doc, def, visitor)
-      db.addSigmap(node, doc)
+      db.registerGenericParams(def, doc)
 
     of nkTypeSection:
       for typeDecl in node:
@@ -442,8 +438,9 @@ proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
     of nkTypeDef:
       let def = unparseDefs(node)[0]
       var doc = db.registerTypeDef(visitor, def)
+      assert not doc.isNil()
       db.updateCommon(doc, def, visitor)
-      db.addSigmap(node, doc)
+      db.registerGenericParams(def, doc)
 
     of nkStmtList:
       for subnode in node:
@@ -485,7 +482,6 @@ type
     graph*: ModuleGraph
     docModule*: DocEntryId ## Toplevel entry - module currently being
     ## processed
-    targetFiles*: IntSet
 
   DocContext* = ref object of PContext
     ## Documentation context object that is constructed for each open and close
@@ -495,7 +491,6 @@ type
     ## processing passes, for both pre-sem and in-sem visitation.
     docModule*: DocEntryId ## Toplevel entry - module currently being
     ## processed
-    targetFiles*: IntSet
     inModuleBody*: bool
     # Fields to track expansion context
     activeExpansion*: ExpansionId ## Id of the current active expansion.
@@ -507,31 +502,14 @@ type
     toplevelExpansions*: seq[ExpansionId] ## List of toplevel macro or
     ## template expansions
 
-func skipFile(ctx: DocContext | DocPreContext, file: FileIndex): bool =
-  if 0 < ctx.targetFiles.len:
-    return file.int notin ctx.targetFiles
-
-proc infoLocation(info: TLineInfo): DocLocation =
-  DocLocation(
-    file: info.fileIndex,
-    line: info.line.int,
-    column: info.col.int..info.col.int
-  )
 
 
 proc initContextCommon(ctx: DocContext | DocPreContext, module: PSym) =
   let conf = ctx.graph.config
   var db = ctx.db
-  if conf.docMode in {docOnefile}:
-    let target = toAbsolute(mainCommandArg(conf), conf.projectPath)
-    ctx.targetFiles.incl conf.fileInfoIdx(target).int
-
-  if ctx.docModule.isNil() and not ctx.skipFile(module.info.fileIndex):
-    ctx.docModule = newDocEntry(db, ndkModule, module.name.s)
-    db[ctx.docModule].location = some db.add(infoLocation(module.info))
-
+  if ctx.docModule.isNil():
+    ctx.docModule = newDocEntry(db, ndkModule, module)
     db[ctx.docModule].visibility = dvkPublic
-    db.sigmap[module] = ctx.docModule
 
 
 
@@ -625,9 +603,6 @@ proc docPreSemOpen(graph: ModuleGraph, module: PSym, idgen: IdGenerator): PPassC
 
 proc docPreSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
   var ctx = DocPreContext(c)
-  if ctx.skipFile(n.info.fileIndex):
-    return
-
   assert not ctx.db.isNil()
   var visitor = DocVisitor()
   visitor.docUser = ctx.docModule
@@ -654,7 +629,6 @@ proc docInSemOpen(
 
   var ctx = DocContext(
     db: db,
-    docModule: db[module],
     resolveHook:  SemResolveHook(resolve),
     expandHooks: (
       preMacro:         SemExpandHook(preExpand),
@@ -672,11 +646,7 @@ proc docInSemOpen(
 proc docInSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
   result = semPassProcess(c, n)
   var ctx = DocContext(c)
-  if ctx.skipFile(n.info.fileIndex):
-    return
-
   let conf = ctx.graph.config
-
   var db = ctx.db
   var visitor = DocVisitor()
 
@@ -729,6 +699,22 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
   # across all open/close triggers.
   var back = DocBackend(db: DocDb())
 
+  implicitTReprConf.incl trfShowSymId
+  implicitTReprConf.extraSymInfo = proc(sym: PSym): ColText =
+    result.add "sym location " & graph.config$sym.info
+    result.add "\n"
+
+    if sym in back.db:
+      result.add "db entry: "
+      result.add back.db $ back.db[sym]
+
+    else:
+      result.add "[NO DB ENTRY]" + fgRed + styleReverse
+
+  implicitTReprConf.extraNodeInfo = proc(node: PNode): ColText =
+    result.add "node location " & graph.config$node.info
+
+  
   graph.backend = back
 
   let preSemPass = makePass(

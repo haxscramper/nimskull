@@ -1,10 +1,11 @@
 import
   ./docgen_types,
+  ./docgen_ast_aux,
   ast/[
     ast,
     renderer,
     lineinfos,
-    types
+    types,
   ],
   sem/[
     sighashes,
@@ -12,12 +13,31 @@ import
   modules/[
     modulegraphs
   ],
+  utils/[
+    astrepr
+  ],
   std/[
     strutils,
     options,
     hashes,
     tables,
   ]
+
+
+proc infoLocation*(info: TLineInfo): DocLocation =
+  DocLocation(
+    file: info.fileIndex,
+    line: info.line.int,
+    column: info.col.int..info.col.int
+  )
+
+proc nodeLocation*(node: PNode): DocLocation =
+  result = infoLocation(node.info)
+  result.column.b += len($node) - 1
+
+proc nodeLocation*(node: PSym): DocLocation =
+  result = infoLocation(node.info)
+  result.column.b += len(node.name.s) - 1
 
 const
   nkStringKinds*  = nkStrKinds
@@ -147,17 +167,19 @@ proc headSym*(node: PNode): PSym =
       assert false, "TODO " & $node.kind
 
 
-proc addSigmap*(db: var DocDb, node: PNode, entry: DocEntryId) =
-  ## Add mapping between specific symbol and documentable entry. Symbol
-  ## node is retrived from the ast.
+
+proc addSigmap*(db: var DocDb, sym: PSym, entry: DocEntryId) =
   try:
-    let sym = node.headSym()
     if not isNil(sym):
       db.sigmap[sym] = entry
 
   except IndexDefect as e:
     discard
 
+proc addSigmap*(db: var DocDb, node: PNode, entry: DocEntryId) =
+  ## Add mapping between specific symbol and documentable entry. Symbol
+  ## node is retrived from the ast.
+  db.addSigmap(node.headSym(), entry)
 
 proc sigHash(t: PNode): SigHash =
   result = t.headSym().trySigHash()
@@ -165,6 +187,33 @@ proc sigHash(t: PNode): SigHash =
 proc sigHash(t: PSym): SigHash =
   result = t.trySigHash()
 
+proc newDocEntry*(
+    db: var DocDb, kind: DocEntryKind, name: PNode | PSym,
+    context: DocDeclarationContext = DocDeclarationContext()
+  ): DocEntryId =
+  ## Construct new documentable entry using symbol or identifier node to
+  ## get name, location. If node is a symbol also updates sigmap with new
+  ## documentable entry.
+  when name is PNode:
+    assert name.kind in {nkSym, nkIdent}, $name.kind
+
+  result = db.newDocEntry(kind, name.getSName(), context)
+  db[result].location = some db.add(name.nodeLocation())
+  when name is PSym:
+    db.addSigmap(name, result)
+
+  else:
+    if name.kind == nkSym:
+      db.addSigmap(name, result)
+
+proc newDocEntry*(
+    db: var DocDb,
+    parent: DocEntryId, kind: DocEntryKind, name: PNode | PSym,
+    context: DocDeclarationContext = DocDeclarationContext()
+  ): DocEntryId =
+  result = db.newDocEntry(kind, name, context)
+  db[result].parent = some parent
+  db[parent].nested.add result
 
 proc contains*(db: DocDb, ntype: PType | PNode | PSym): bool =
   ntype.headSym() in db.sigmap
@@ -173,6 +222,10 @@ proc `[]`*(db: DocDb, ntype: PType | PNode | PSym): DocEntryId =
   let sym = headSym(ntype)
   if not sym.isNil() and sym in db.sigmap:
     return db.sigmap[sym]
+
+  else:
+    assert false, "no doc entry for node " & $treeRepr(nil, ntype)
+
 
 
 proc contains(s1, s2: DocLocation): bool =
@@ -232,14 +285,6 @@ proc splitOn*(base, sep: DocLocation):
 
 
 
-proc nodeLocation*(node: PNode): DocLocation =
-  let l = len($node)
-  initDocLocation(
-    node.info.line.int,
-    node.info.col.int,
-    node.info.col.int + l - 1,
-    node.info.fileIndex
-  )
 
 proc nodeExprSlice(node: PNode): DocLocation =
   ## Return source code slice for `node`.
@@ -310,17 +355,17 @@ proc occur*(
     db: var DocDb,
     node: PNode,
     kind: DocOccurKind,
-    user: Option[DocEntryId]
+    user: Option[DocEntryId] = none DocEntryId,
+    localUser: Option[DocEntryId] = none DocEntryId,
   ): DocOccurId =
-
   var occur = DocOccur(
-    user: user, kind: kind, loc: db.add(nodeLocation(node)))
+    user: user, kind: kind,
+    loc: db.add(nodeLocation(node)),
+    refid: db[node],
+    localUser: localUser
+  )
 
-  if kind in dokLocalKinds:
-    assert false, "Unexpected kind for occur " & $kind
-
-  else:
-    occur.refid = db[node]
+  assert not occur.refid.isNil(), $node.kind
 
   return db.occurencies.add occur
 
@@ -330,13 +375,15 @@ proc occur*(
     parent: PNode,
     id: DocEntryId,
     kind: DocOccurKind,
-    user: Option[DocEntryId] = none DocEntryId
+    user: Option[DocEntryId] = none DocEntryId,
+    localUser: Option[DocEntryId] = none DocEntryId,
   ): DocOccurId =
   ## Construct new docmentable entry occurence and return new ID
+  assert not id.isNil(), $node.kind
   var occur = DocOccur(
-    kind: kind, user: user, loc: db.add(parent.subslice(node)))
+    kind: kind, user: user, localUser: localUser,
+    loc: db.add(parent.subslice(node)), refid: id)
 
-  occur.refid = id
   return db.add occur
 
 proc occur*(
@@ -344,36 +391,13 @@ proc occur*(
     node: PNode,
     id: DocEntryId,
     kind: DocOccurKind,
-    user: Option[DocEntryId] = none DocEntryId
+    user: Option[DocEntryId] = none DocEntryId,
+    localUser: Option[DocEntryId] = none DocEntryId,
   ): DocOccurId =
   ## Construct new docmentable entry occurence and return new ID
+  assert not id.isNil()
   var occur = DocOccur(
-    kind: kind, user: user, loc: db.add(nodeLocation(node)))
-
-  occur.refid = id
-  return db.add occur
-
-proc occur*(
-    db: var DocDb,
-    node: PNode,
-    kind: DocOccurKind,
-    localid: string,
-    withInit: bool = false
-  ): DocOccurId =
-  ## Construct new occurence of the local documentable entry and return the
-  ## resulting ID
-  var occur = DocOccur(
-    kind: kind, loc: db.add(nodeLocation(node)))
-
-  occur.localId = localid
-  occur.withInit = withInit
-
-  if kind in dokLocalDeclKinds:
-    if not isNil(node.typ):
-      let et = node.typ.skipTypes(skipPtrs)
-      if not isNil(et.sym):
-        let id = db[et.sym]
-        if not id.isNil():
-          occur.user = some id
+    kind: kind, user: user, localUser: localUser,
+    loc: db.add(nodeLocation(node)), refid: id)
 
   return db.add occur

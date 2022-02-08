@@ -31,6 +31,7 @@ type
     ndkArg = "arg" ## Entry (function, procedure, macro, template) arguments
     ndkInject = "inject" ## Variable injected into the scope by
     ## template/macro instantiation.
+    ndkVar = "var"
     ndkPragma = "pragma" ## Compiler-specific directives `{.pragma.}` in
     ## nim, `#pragma` in C++ and `#[(things)]` from rust.
 
@@ -73,6 +74,8 @@ type
     ndkPackage = "package" ## System or programming language package
     ## (library). If present used as toplevel grouping element.
 
+
+
   DocProcKind* = enum
     dpkRegular = "regular"
     dpkOperator = "operator"
@@ -92,6 +95,7 @@ const
     ndkObject, ndkDefect, ndkException, ndkEffect
   }
 
+  ndkLocalKinds* = { ndkArg, ndkInject, ndkVar }
   ndkNewtypeKinds* = { ndkObject .. ndkDistinctAlias }
   ndkProcKinds* = { ndkProc .. ndkConverter }
   ndkAliasKinds* = { ndkTypeclass, ndkAlias, ndkDistinctAlias }
@@ -105,7 +109,8 @@ type
                                           ## specialization
     dokTypeSpecializationUse = "typeAsSpecialization" ## Specialization of
                              ## generic type using other types
-
+    dokParametrizationWithArg = "parametrizationWithArg" ## Using
+    ## template/macro parameter as a type in nested expression.
     dokTypeAsArgUse = "typeasArg"
     dokTypeAsReturnUse = "typeAsReturn"
     dokTypeAsFieldUse = "typeAsField"
@@ -120,23 +125,20 @@ type
     dokMacroUsage = "macroUse"
     dokAnnotationUsage = "annotation"
 
-    # local section start
-    dokLocalUse = "localUse" ## Generic 'use' of local entry
-    dokLocalWrite = "localWrite"
-    dokLocalRead = "localRead"
+    # local start
+    dokVarWrite = "write"
+    dokVarRead = "read"
+    dokPassTo = "pass"
 
 
     # local declaration section start
     dokLocalArgDecl = "localArgDecl"
     dokLocalVarDecl = "localVarDecl"
     # local declarations section end
+
+    dokGlobalVarDecl= "globalDecl"
     # local section end
 
-    dokGlobalWrite = "globalWrite" ## Asign value to global variable
-    dokGlobalRead = "globalRead" ## Non-asign form of global variable
-    ## usage. Taking address and mutating, passing to function that accepts
-    ## `var` parameter etc. would count as 'read' action.
-    dokGlobalDeclare = "globalDecl"
 
     dokFieldUse = "fieldUse"
     dokFieldSet = "fieldSet"
@@ -159,8 +161,8 @@ type
 
 
 const
-  dokLocalKinds* = {dokLocalUse .. dokLocalArgDecl }
-  dokLocalDeclKinds* = { dokLocalArgDecl .. dokLocalVarDecl }
+  dokLocalKinds* = {dokLocalArgDecl .. dokLocalVarDecl }
+  dokLocalDeclKinds* = dokLocalKinds
 
 declareIdType(Expansion, addHash = true)
 declareIdType(DocOccur, addHash = true)
@@ -208,22 +210,16 @@ type
     ## replaced by extra data table associated with each token.
     user*: Option[DocEntryId] ## For occurence of global documentable
     ## entry - lexically scoped parent (for function call - callee, for
-    ## type - parent composition). For local occurence - type of the
-    ## identifier (for local variables, arguments etc).
+    ## type - parent composition).
+    localUser*: Option[DocEntryId]
     inExpansionOf*: Option[ExpansionId]
 
     loc*: DocLocationId ## Position of the occurence in the project
     ## files.
     node*: PNode ## Node that occurence happened in. In the future this
     ## should be converted to node IDs
-    case kind*: DocOccurKind ## Type of entry occurence
-      of dokLocalKinds:
-        localId*: string
-        withInit*: bool ## For 'local decl' - whether identifier
-        ## was default-constructed or explicitly initialized.
-
-      else:
-        refid*: DocEntryId ## Documentable entry id
+    kind*: DocOccurKind ## Type of entry occurence
+    refid*: DocEntryId ## Documentable entry id
 
 
 declareStoreType(DocOccur)
@@ -459,12 +455,6 @@ func incl*(table: var DocIdTableN, idKey, idVal: DocEntryId) =
 func incl*(s: var DocEntrySet, entry: DocEntry) =
   s.incl entry
 
-proc getSub*(db: DocDb, parent: DocEntryId, subName: string): DocEntryId =
-  ## Get nested entry by name. Might return empty doc entry id if name is
-  ## not found.
-  for sub in db[parent].nested:
-    if db[sub].name == subName:
-      return sub
 
 proc newDocEntry*(
     db: var DocDb, kind: DocEntryKind, name: string,
@@ -600,6 +590,17 @@ proc `$`*(db: DocDb, id: DocEntryId): string =
     r.add "'"
 
   return r
+
+proc getSub*(db: DocDb, parent: DocEntryId, subName: string): DocEntryId =
+  ## Get nested entry by name. Might return empty doc entry id if name is
+  ## not found.
+  for sub in db[parent].nested:
+    if db[sub].name == subName:
+      return sub
+
+  assert false, "no nested documentable entry '" &
+    subName & "' for " & (db$parent)
+
 
 proc initDocLocation*(
     line, startCol, endCol: int, file: FileIndex): DocLocation =

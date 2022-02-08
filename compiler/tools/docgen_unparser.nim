@@ -13,6 +13,9 @@ import
   utils/[
     astrepr
   ],
+  std/[
+    options
+  ],
   ./docgen_file_tracking,
   ./docgen_ast_aux
 
@@ -67,6 +70,8 @@ type
     ## either nodes that had `.comment` attached, or comment
     ## statements/runnable entries
     defNode: PNode
+    genericParams*: seq[tuple[
+      name: PNode, constraint: Option[PNode]]]
 
     case kind*: DefTreeKind
       of deftProc:
@@ -109,19 +114,6 @@ func hasSym*(def: DefTree | DefName): bool =
   ## (`nkSym`)
   def.nameNode.kind == nkSym
 
-func getSName*(p: PNode): string =
-  ## Get string value from `PNode`
-  case p.kind:
-    of nkIdent:         result = p.ident.s
-    of nkSym:           result = p.sym.name.s
-    of nkStrKinds:      result = p.strVal
-    of nkOpenSymChoice: result = p[0].sym.name.s
-    of nkAccQuoted:
-      for sub in p:
-        result.add getSName(sub)
-
-    else:
-      assert false, "Unexpected kind for 'getSName' - " & $p.kind
 
 func filterPragmas*(pragmas: seq[PNode], names: seq[string]): seq[PNode] =
   ## Filter out list of pragma nodes, returning only ones whose names
@@ -141,7 +133,6 @@ func filterPragmas*(pragmas: seq[PNode], names: seq[string]): seq[PNode] =
           assert false, $pragma[0].kind
 
 
-proc getSName*(p: PSym): string = p.name.s
 func getSName*(def: DefName | DefTree): string =
   ## Get string name of definition tree or definition name
   def.nameNode().getSName()
@@ -279,6 +270,14 @@ proc getBaseType*(node: PNode): PNode =
   if body[1].kind == nkOfInherit:
     return body[1][0]
 
+proc unparseGenericParams*(node: PNode): seq[tuple[
+  name: PNode, constraint: Option[PNode]]] =
+
+  assert node.kind in {nkGenericParams, nkEmpty}, $treeRepr(nil, node)
+  for param in node:
+    assert param.kind in {nkSym, nkIdent}, $treeRepr(nil, param)
+    result.add((param, none PNode))
+
 proc unparseType*(node: PNode): DefTree =
   let body = node[2].skipNodes({nkPtrTy, nkRefTy})
   case body.kind:
@@ -328,6 +327,8 @@ proc unparseType*(node: PNode): DefTree =
       echo ">>>> node"
       failNode node
 
+  result.genericParams = unparseGenericParams(node[1])
+
 proc isDocumentationNode*(n: PNode): bool =
   ## Check if node is a 'documentation' - either `CommentStmt` or
   ## `runnableExample` call.
@@ -370,6 +371,7 @@ proc unparseProcDef*(node: PNode): DefTree =
       result.defName.pragmas.add arg
 
   result.returnType = node[paramsPos][0]
+  result.genericParams = unparseGenericParams(node[genericParamsPos])
 
   for arg in node[paramsPos][1..^1]:
     result.arguments.add unparseIdentDefs(arg)

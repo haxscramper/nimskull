@@ -222,7 +222,6 @@ let verboseTReprConf* =
     base
   ## Show absolutely everything
 
-
 var
   compilerTraceReprConf*: TReprConf =
     block:
@@ -248,7 +247,6 @@ var
     ## `debugType`. Can be used in order to configure behaviour of the
     ## debugging functions that could later be called from `gdb` environment
     ## (`debugAst`, `debugType`, `debugSym`), or sem execution tracer
-
 
 const IntTypes = {
   tyInt, tyInt8, tyInt16,

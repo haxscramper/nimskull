@@ -311,7 +311,7 @@ proc toTrail(kind: DocOccurKind, lastDeclare: DocOccurKind): SourcetrailReferenc
     of dokCall:
       result = srkCall
 
-    of dokEnumFieldUse, dokGlobalRead, dokGlobalWrite,
+    of dokEnumFieldUse, dokVarRead, dokVarWrite,
        dokFieldUse, dokFieldSet:
       result = srkUsage
 
@@ -334,7 +334,7 @@ proc registerUses*(
 
     if occur.kind in dokLocalKinds:
       discard writer.recordLocalSymbolLocation(
-        writer.recordLocalSymbol(occur.localId),
+        writer.recordLocalSymbol(db[occur.refid].name & $occur.refid.int),
         toRange(fileId, db[occur.loc]))
 
     elif occur.refid.isNil():
@@ -343,7 +343,7 @@ proc registerUses*(
     elif occur.kind in {
       dokObjectDeclare, dokCallDeclare,
       dokAliasDeclare, dokEnumDeclare,
-      dokGlobalDeclare, dokEnumFieldDeclare,
+      dokGlobalVarDecl, dokEnumFieldDeclare,
       dokFieldDeclare
     }:
       userId = idMap.docToTrail[occur.refid]
@@ -464,14 +464,10 @@ proc registerDb*(writer: var SourcetrailDBWriter, idMap: IdMap, db: DocDb): IdMa
   result = idMap
   for id, entry in db.entries:
     if (entry.kind in {ndkPackage} and entry.name == "") or
-       (entry.kind in {ndkArg}):
+       (entry.kind in ndkLocalKinds):
       continue
 
     let symId = writer.recordSymbol(db.toTrailName(id), entry.kind.toTrail())
-
-    if entry.name == "runnableExamples":
-      echo db $ id
-      echo symId
 
     result.docToTrail[id] = symId
 
