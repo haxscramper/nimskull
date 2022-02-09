@@ -16,6 +16,9 @@ import
   utils/[
     astrepr
   ],
+  front/[
+    options
+  ],
   std/[
     strutils,
     tables
@@ -81,13 +84,13 @@ type
     rskInclude
 
 
-  RegisterState = object
+  RegisterState* = object
     state: seq[RegisterStateKind]
     switchId: DocEntryId
     localUser: Option[DocEntryId]
     moduleId*: DocEntryId
     visitor: DocVisitor
-    user: Option[DocEntryId]
+    user*: Option[DocEntryId]
     hasInit: bool
     allowMacroNodes: bool ## Allow to record information about usages in
     ## code generated form macro expansions.
@@ -288,11 +291,39 @@ proc registerProcBody(
 
   aux(body, db)
 
-proc occur(
-    db: var DocDb, node: PNode, kind: DocOccurKind, state: RegisterState
+proc occur*(
+    db: var DocDb,
+    node: PNode,
+    kind: DocOccurKind,
+    state: RegisterState,
+    idOverride: DocEntryId = EmptyDocEntryId
   ): DocOccurId =
-  db.occur(node, kind, state.user, state.localUser)
+  var occur = DocOccur(
+    user: state.user,
+    refid: tern(idOverride.isNil(), db[node], idOverride),
+    kind: kind,
+    loc: db.add(nodeLocation(node)),
+    localUser: state.localUser
+  )
+  assert not occur.refid.isNil(), $node.kind
+  return db.occurencies.add occur
 
+proc occur*(
+    db: var DocDb,
+    node: PNode,
+    parent: PNode,
+    kind: DocOccurKind,
+    state: RegisterState,
+    idOverride: DocEntryId = EmptyDocEntryId
+  ): DocOccurId =
+  ## Construct new docmentable entry occurence and return new ID
+  var occur = DocOccur(
+    kind: kind, user: state.user, localUser: state.localUser,
+    loc: db.add(parent.subslice(node)),
+    refid: tern(idOverride.isNil(), db[node], idOverride))
+
+  assert not occur.refid.isNil(), $node.kind
+  return db.add occur
 
 proc registerSymbolUse(
     db: var DocDb,
@@ -363,11 +394,12 @@ proc registerSymbolUse(
     of skField:
       if not node.sym.owner.isNil():
         let id = db[node.sym.owner]
-        if not id.isNil():
-          let field = db.getSub(id, $node)
+        if db[id].kind in {ndkObject}:
+          # Tuple typedefs can also have fields, but we are not tracking
+          # them here since `tuple[]` /type/ is not a documentable entry.
           discard db.occur(
-            node, parent, field, dokFieldUse,
-            state.user, state.localUser)
+            node, parent, dokFieldUse, state,
+            idOverride = db.getSub(id, $node))
 
     of skProcDeclKinds:
       if node.sym notin db:
@@ -477,25 +509,23 @@ proc reg(
 
     of nkIdent:
       if not state.switchId.isNil():
-        let sub = db.getSub(state.switchId, $node)
-        if not sub.isNil():
-          discard db.occur(
-            node, sub, dokEnumFieldUse, state.user, state.localUser)
+        discard db.occur(
+          node, dokEnumFieldUse, state, idOverride = db.getSub(state.switchId, $node))
 
       elif state.top() == rskDefineCheck:
-        let def = db.getOrNewNamed(ndkCompileDefine, $node)
         discard db.occur(
-          node, def, dokDefineCheck, state.user, state.localUser)
+          node, dokDefineCheck, state,
+          idOverride = db.getOrNewNamed(ndkCompileDefine, $node))
 
       elif state.top() == rskPragma:
-        let def = db.getOrNewNamed(ndkPragma, $node)
         discard db.occur(
-          node, def, dokAnnotationUsage, state.user, state.localUser)
+          node, dokAnnotationUsage, state,
+          idOverride = db.getOrNewNamed(ndkPragma, $node))
 
       elif state.top() == rskObjectFields:
-        let def = db.getSub(state.user.get, $node)
         discard db.occur(
-          node, def, dokFieldDeclare, state.user, state.localUser)
+          node, dokFieldDeclare, state,
+          idOverride = db.getSub(state.user.get, $node))
 
     of nkCommentStmt,
        nkEmpty,
@@ -514,9 +544,9 @@ proc reg(
         let parent = db[node.typ.sym]
         if node.typ.sym.ast.isEnum():
           if not parent.isNil():
-            let sub = db.getSub(parent, $node)
             discard db.occur(
-              node, sub, dokEnumFieldUse, state.user, state.localUser)
+              node, dokEnumFieldUse, state,
+              idOverride = db.getSub(parent, $node))
 
 
     of nkPragmaExpr:
@@ -636,8 +666,16 @@ proc reg(
         elif node.isEnum():    rskEnumHeader
         else:                  rskTypeHeader
 
+
       var state = state
-      result = db.reg(node[0], state + decl, node)
+      if state.top() != rskTopLevel and node[0] notin db:
+        # Inner type declaration, they are not tracked into any
+        # documentable entries for now.
+        discard
+      else:
+        result = db.reg(node[0], state + decl, node)
+
+
       if state.user.isNone():
         state.user = result
 
@@ -669,10 +707,9 @@ proc reg(
           let head = db[headType.sym]
           for fieldPair in node[1 ..^ 1]:
             let field = fieldPair[0]
-            let fieldId = db.getSub(head, field.getSName())
-            if not fieldId.isNil():
-              discard db.occur(
-                field, fieldPair, fieldId, dokFieldSet, state.user)
+            discard db.occur(
+              field, fieldPair, dokFieldSet, state,
+              idOverride = db.getSub(head, field.getSName()))
 
       db.reg(node[0], state, node)
       for subnode in node[1 ..^ 1]:
@@ -785,10 +822,7 @@ proc writeCode(
             let id = db[node.sym]
             # TODO Occurence information can be added here,
             if not id.isNil():
-              let ocId = db.occur(
-                node = node,
-                kind = dokInMacroExpansion
-              )
+              let ocId = db.occur(node, dokInMacroExpansion, RegisterState())
 
               db[ocId].inExpansionOf = some expand
 

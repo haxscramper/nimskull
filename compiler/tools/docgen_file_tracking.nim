@@ -297,7 +297,7 @@ proc nodeExprSlice(node: PNode): DocLocation =
       discard
 
 
-proc subslice(parent, node: PNode): DocLocation =
+proc subslice*(parent, node: PNode): DocLocation =
   let main = parent.nodeExprSlice()
   case parent.kind:
     of nkDotExpr: result = main[^(len($node)) .. ^1]
@@ -351,53 +351,3 @@ proc nodeExtent*(node: PNode): DocExtent =
   result.start = (start.line.int, start.col.int)
   result.finish = (finish.line.int, finish.col.int)
 
-proc occur*(
-    db: var DocDb,
-    node: PNode,
-    kind: DocOccurKind,
-    user: Option[DocEntryId] = none DocEntryId,
-    localUser: Option[DocEntryId] = none DocEntryId,
-  ): DocOccurId =
-  var occur = DocOccur(
-    user: user, kind: kind,
-    loc: db.add(nodeLocation(node)),
-    refid: db[node],
-    localUser: localUser
-  )
-
-  assert not occur.refid.isNil(), $node.kind
-
-  return db.occurencies.add occur
-
-proc occur*(
-    db: var DocDb,
-    node: PNode,
-    parent: PNode,
-    id: DocEntryId,
-    kind: DocOccurKind,
-    user: Option[DocEntryId] = none DocEntryId,
-    localUser: Option[DocEntryId] = none DocEntryId,
-  ): DocOccurId =
-  ## Construct new docmentable entry occurence and return new ID
-  assert not id.isNil(), $node.kind
-  var occur = DocOccur(
-    kind: kind, user: user, localUser: localUser,
-    loc: db.add(parent.subslice(node)), refid: id)
-
-  return db.add occur
-
-proc occur*(
-    db: var DocDb,
-    node: PNode,
-    id: DocEntryId,
-    kind: DocOccurKind,
-    user: Option[DocEntryId] = none DocEntryId,
-    localUser: Option[DocEntryId] = none DocEntryId,
-  ): DocOccurId =
-  ## Construct new docmentable entry occurence and return new ID
-  assert not id.isNil()
-  var occur = DocOccur(
-    kind: kind, user: user, localUser: localUser,
-    loc: db.add(nodeLocation(node)), refid: id)
-
-  return db.add occur

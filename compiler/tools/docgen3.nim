@@ -540,7 +540,9 @@ proc preExpand(context: PContext, expr: PNode, sym: PSym) =
     # If there are no other active expansions, register current one as a
     # toplevel entry
     ctx.toplevelExpansions.add active
-    discard ctx.db.occur(expr, ctx.db[sym], dokExpansion)
+    let state = RegisterState()
+    discard ctx.db.occur(
+      expr, dokExpansion, state, idOverride = ctx.db[sym])
 
   else:
     ctx.db.expansions[ctx.expansionStack[^1]].nested.add active
@@ -703,6 +705,12 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
   implicitTReprConf.extraSymInfo = proc(sym: PSym): ColText =
     result.add "sym location " & graph.config$sym.info
     result.add "\n"
+    result.add "hashdata [$#.$#.$#.$#]\n" % [
+      $sym.name.id,
+      $sym.info.fileIndex.int,
+      $sym.info.line,
+      $sym.info.col
+    ]
 
     if sym in back.db:
       result.add "db entry: "
