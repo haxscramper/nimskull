@@ -310,7 +310,6 @@ proc unparseType*(node: PNode): DefTree =
       result.objFields = unparseFields(body[2])
 
       if body[1].kind == nkOfInherit:
-        debug body[1]
         result.objBase = some body[1][0]
 
     of deftEnum:

@@ -397,6 +397,8 @@ type
 declareStoreType(DocEntry)
 
 type
+  ApproximateSymbolLocation* = tuple[nameId, file, col, line: int]
+
   DocDb* = ref object of RootRef
     entries*: DocEntryStore
     currentTop*: DocEntry
@@ -410,6 +412,36 @@ type
     ## open/close for module
     occurencies*: DocOccurStore
     sigmap*: Table[PSym, DocEntryId]
+    locationSigmap*: Table[ApproximateSymbolLocation, DocEntryId] ##[HACK
+
+This field maps declarations only based on the /identifier location/ - this
+is necessary becase even after *sem* layer you can get /untyped/ fields on
+objects and similar instances of absolutely nonsensical behavior. This
+field needs to be removed in the future, but for now this is a workaround.
+
+Related handing logic is in the `[]` for `DocDb` (file tracking logic) and
+`addSigmap` updates `.sigmap` when necessary, performing translation of the
+symbol nodes into known identifiers.
+
+Example on how this currenly works. The type definition is first
+encountered by the declaration registration, and `field` is untyped. We add
+it to location sigmap, pointing to the correspoding documentable entry.
+
+.. code-block:: NimMajor
+
+    type
+      Other = object
+        field: int
+
+When the actual usage of the field is encountered, for example
+`Other().field`, `[]` call with `field` will see the `Sym` node, poining to
+the same location. It will update the database as needed (put the symbol in
+the sigmap) and return associated entry id.
+
+This hack also has a very unfortunate consequence of every `[]` potentially
+mutating the DB state.
+
+]##
     toplevelExpansions*: seq[tuple[
       module: DocEntryId, expansions: seq[ExpansionId]]] ## List of
     ## toplevel macro or template expansions

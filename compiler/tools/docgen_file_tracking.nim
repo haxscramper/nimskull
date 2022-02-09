@@ -85,26 +85,36 @@ const
   }
 
 
-proc trySigHash*(sym: PSym): SigHash =
-  if not isNil(sym):
-    try:
-      result = sym.sigHash()
-
-    except IndexDefect as e:
-      discard
+func approxLoc(s: PSym): ApproximateSymbolLocation =
+  (s.name.id, s.info.fileIndex.int, s.info.line.int, s.info.col.int)
 
 
-func getHashdata(s: PSym): auto = (
-    s.kind,
-    s.name.id,
-    s.info.fileIndex.int,
-    s.info.line,
-    s.info.col,
-  )
+func approxLoc(node: PNode): ApproximateSymbolLocation =
+  if node.kind == nkIdent:
+    return (
+      node.ident.id,
+      node.info.fileIndex.int,
+      node.info.line.int,
+      node.info.col.int
+    )
+
+  else:
+    return node.sym.approxLoc()
+
+func getHashdata(s: PSym): auto =
+  let (a, b, c, d) = approxLoc(s)
+  return (s.kind, a, b, c, d)
 
 
-proc hash*(s: PSym): Hash = hash(getHashdata(s))
-proc `==`*(s1, s2: PSym): bool = getHashdata(s1) == getHashdata(s2)
+proc hash*(s: PSym): Hash =
+  ## Has symbol using it's location definition data. Note - this is not a
+  ## general-purpose hashing for `PSym`, it's behavior is specifically made
+  ## to work for documentation generation, and most likely can't be reused
+  ## elsewhere.
+  hash(getHashdata(s))
+
+proc `==`*(s1, s2: PSym): bool =
+  getHashdata(s1) == getHashdata(s2)
 
 proc hashdata*(s: PSym): string =
   let d = getHashdata(s)
@@ -115,12 +125,12 @@ proc hashdata*(s: PSym): string =
 proc headSym(s: PSym): PSym = s
 proc headSym(t: PType): PSym = t.sym.headSym()
 
-proc headSym*(node: PNode): PSym =
+proc headIdentOrSym(node: PNode): PNode =
   case node.kind:
     of nkProcDeclKinds, nkDistinctTy, nkVarTy, nkAccQuoted,
        nkBracketExpr, nkTypeDef, nkPragmaExpr, nkPar, nkEnumFieldDef,
        nkIdentDefs, nkRecCase, nkCallStrLit:
-      result = headSym(node[0])
+      result = headIdentOrSym(node[0])
 
     of nkCommand, nkCall, nkPrefix, nkPostfix,
        nkHiddenStdConv, nkInfix:
@@ -129,78 +139,71 @@ proc headSym*(node: PNode): PSym =
 
       elif node.kind == nkCall:
         if node.len > 1 and node[1].kind == nkSym:
-          result = node[1].sym
+          result = node[1]
 
         else:
-          result = headSym(node[0])
+          result = headIdentOrSym(node[0])
 
       else:
-        result = headSym(node[0])
+        result = headIdentOrSym(node[0])
 
     of nkDotExpr:
-      result = headSym(node[1])
+      result = headIdentOrSym(node[1])
 
     of nkSym:
-      result = node.sym
+      result = node
 
     of nkRefTy, nkPtrTy:
       if node.len == 0:
         result = nil
 
       else:
-        result = headSym(node[0])
+        result = headIdentOrSym(node[0])
 
-    of nkIdent, nkEnumTy, nkProcTy, nkObjectTy, nkTupleTy,
+    of nkEnumTy, nkProcTy, nkObjectTy, nkTupleTy,
        nkTupleClassTy, nkIteratorTy, nkOpenSymChoice,
        nkClosedSymChoice, nkCast, nkLambda, nkCurly,
        nkReturnStmt, nkRaiseStmt, nkBracket, nkEmpty,
-       nkIfExpr
-         :
+       nkIfExpr:
       result = nil
+
+    of nkIdent:
+      result = node
 
     of nkCheckedFieldExpr:
       # First encountered during processing of `locks` file. Most likely
       # this is a `object.field` check
       result = nil
 
-    of nkStmtListExpr:
-      if isNil(node.typ):
-        if node.len > 0:
-          result = headSym(node[1])
-
-        else:
-          result = nil
-
-      else:
-        result = node.typ.skipTypes({tyRef}).sym
-
     of nkType, nkObjConstr:
-      result = node.typ.skipTypes({tyRef}).sym
-
+      debug node
+      assert false
+      result = node
 
     else:
       assert false, "TODO " & $node.kind
 
+proc headSym*(node: PNode): PSym =
+  let n = node.headIdentOrSym()
+  if isNil(n) or n.kind == nkIdent:
+    result = nil
 
+  else:
+    result = n.sym
 
 proc addSigmap*(db: var DocDb, sym: PSym, entry: DocEntryId) =
-  try:
-    if not isNil(sym):
-      db.sigmap[sym] = entry
-
-  except IndexDefect as e:
-    discard
+  if not isNil(sym):
+    db.sigmap[sym] = entry
 
 proc addSigmap*(db: var DocDb, node: PNode, entry: DocEntryId) =
   ## Add mapping between specific symbol and documentable entry. Symbol
   ## node is retrived from the ast.
-  db.addSigmap(node.headSym(), entry)
+  let id = headIdentOrSym(node)
+  if id.kind == nkIdent:
+    db.locationSigmap[approxLoc(id)] = entry
 
-proc sigHash(t: PNode): SigHash =
-  result = t.headSym().trySigHash()
-
-proc sigHash(t: PSym): SigHash =
-  result = t.trySigHash()
+  else:
+    db.addSigmap(id.sym, entry)
 
 proc newDocEntry*(
     db: var DocDb, kind: DocEntryKind, name: PNode | PSym,
@@ -214,12 +217,7 @@ proc newDocEntry*(
 
   result = db.newDocEntry(kind, name.getSName(), context)
   db[result].location = some db.add(name.nodeLocation())
-  when name is PSym:
-    db.addSigmap(name, result)
-
-  else:
-    if name.kind == nkSym:
-      db.addSigmap(name, result)
+  db.addSigmap(name, result)
 
 
 proc newDocEntry*(
@@ -236,17 +234,46 @@ proc contains*(db: DocDb, ntype: PType | PNode | PSym): bool =
   return not sym.isNil() and sym in db.sigmap
 
 
-proc `[]`*(db: DocDb, ntype: PType | PNode | PSym): DocEntryId =
-  let sym = headSym(ntype)
-  if not sym.isNil() and sym in db.sigmap:
+proc `[]`*(db: DocDb, sym: PSym): DocEntryId =
+  assert not isNil(sym)
+  if sym in db:
     return db.sigmap[sym]
 
   else:
     assert false, "no doc entry for node $# symdata was $# (in table $#)" % [
-      $treeRepr(nil, ntype),
+      $treeRepr(nil, sym),
       hashdata(sym),
       $(sym in db.sigmap)
     ]
+
+
+proc `[]`*(db: var DocDb, ntype: PNode): DocEntryId =
+  ## Return documentable entry ID associated with type/node/symbol
+  let head = headIdentOrSym(ntype)
+  if head in db:
+    return db.sigmap[head.sym]
+
+  else:
+    let loc = head.approxLoc()
+    if loc in db.locationSigmap:
+      if head.kind == nkSym:
+        # echo "updating mapping of the node to symbol"
+        # echo db $ db.locationSigmap[loc]
+        # debug head
+        db.addSigmap(head, db.locationSigmap[loc])
+        return db[head.sym]
+
+      else:
+        return db.locationSigmap[loc]
+
+    else:
+      assert false, "no doc entry for node $# loc was $# (in table $#)" % [
+        $treeRepr(nil, head),
+        $loc,
+        $(loc in db.locationSigmap)
+      ]
+
+
 
 
 

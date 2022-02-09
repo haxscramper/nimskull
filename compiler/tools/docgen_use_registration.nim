@@ -583,15 +583,17 @@ proc reg(
     of nkIntKinds:
       if not isNil(node.typ) and
          not isNil(node.typ.sym) and
-         not isNil(node.typ.sym.ast):
-
-        let parent = db[node.typ.sym]
-        if node.typ.sym.ast.isEnum():
-          if not parent.isNil():
+         not isNil(node.typ.sym.ast) and
+         not isNil(node.typ.n) and
+         node.typ.n.kind == nkEnumTy:
+        for enField in node.typ.n:
+          # HACK Enum litearls are replaced by integers in the sem layer
+          # for now, so I have to do this weird name translation
+          assert enField.kind in {nkSym}
+          if enField.getSName() == $node:
             discard db.occur(
               node, dokEnumFieldUse, state,
-              idOverride = db.getSub(parent, $node))
-
+              idOverride = db[enField])
 
     of nkPragmaExpr:
       result = db.reg(node[0], state, node)
@@ -751,7 +753,6 @@ proc reg(
           let head = db[headType.sym]
           for fieldPair in node[1 ..^ 1]:
             let key = fieldPair[0]
-            debug key
             if key in db:
               discard db.reg(key, state, fieldPair)
 

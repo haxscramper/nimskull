@@ -29,6 +29,7 @@ import
   ./docgen_unparser,
   ./docgen_ast_aux,
   ./docgen_sqlite,
+  ./dump_ir,
   std/[
     tables,
     hashes,
@@ -117,7 +118,7 @@ proc getEntryName(node: PNode): DefName =
     else:
       result = unparseName(node)
 
-proc classifyDeclKind(db: DocDb, def: DefTree): DocEntryKind =
+proc classifyDeclKind(db: var DocDb, def: DefTree): DocEntryKind =
   case def.kind:
     of deftArg: result = ndkArg
     of deftLet, deftVar, deftConst: result = ndkVar
@@ -270,9 +271,11 @@ proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntry
 proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntryId =
   case decl.kind:
     of deftObject:
-      debug decl.node
       result = db.newDocEntry(
         visitor, db.classifyDeclKind(decl), decl.nameNode())
+
+      # if db[result].name == "TNimType":
+      #   debug decl.node
 
       if decl.objBase.isSome():
         let base = decl.objBase.get()
@@ -875,6 +878,15 @@ proc writeJsonLines*(conf: ConfigRef, db: DocDb) =
 
 proc commandDoc3*(graph: ModuleGraph, ext: string) =
   ## Execute documentation generation command for module graph
+
+#   debug graph.compileString("""
+# type
+#   Other = object
+#     field: int
+
+# echo Other().field
+# """)
+
   let db = setupDocPasses(graph)
   compileProject(graph)
 
