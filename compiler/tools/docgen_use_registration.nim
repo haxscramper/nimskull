@@ -246,13 +246,7 @@ proc registerProcBody(
 
       of nkCall, nkCommand:
         let head = node[0].headSym()
-        if not isNil(head) and head in db:
-          # HACK - I don't understand /why/ node with symbols is not
-          # registered in the database. First time when I encountered this
-          # was `iterators_1.dotdotImpl` call to `inc(res)` - in that case
-          # `inc`'s symbol was `module:2 item:1975`, but at the time of
-          # definition it was `module:2 item:272`. Symbol location was the
-          # same in both cases.
+        if not isNil(head):
           main.calls.incl db[head]
           let raises = head.effectSpec(wRaises)
           if not raises.isEmptyTree():
@@ -460,7 +454,7 @@ proc registerSymbolUse(
 
 
         else:
-          assert false, $state.top() & $treeRepr(nil, node)
+          assert false, $state.state & $treeRepr(nil, node)
 
       discard db.occur(node, kind, state)
 

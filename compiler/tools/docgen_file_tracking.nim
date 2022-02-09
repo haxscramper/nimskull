@@ -94,8 +94,23 @@ proc trySigHash*(sym: PSym): SigHash =
       discard
 
 
-proc hash*(s: PSym): Hash =
-  hash(s.itemId.item) !& hash(s.itemId.module)
+func getHashdata(s: PSym): auto = (
+    s.kind,
+    s.name.id,
+    s.info.fileIndex.int,
+    s.info.line,
+    s.info.col,
+  )
+
+
+proc hash*(s: PSym): Hash = hash(getHashdata(s))
+proc `==`*(s1, s2: PSym): bool = getHashdata(s1) == getHashdata(s2)
+
+proc hashdata*(s: PSym): string =
+  let d = getHashdata(s)
+  "[$#.$#.$#.$#.$#] = $#" % [$d[0], $d[1], $d[2], $d[3], $d[4], $hash(s)]
+
+
 
 proc headSym(s: PSym): PSym = s
 proc headSym(t: PType): PSym = t.sym.headSym()
@@ -206,6 +221,7 @@ proc newDocEntry*(
     if name.kind == nkSym:
       db.addSigmap(name, result)
 
+
 proc newDocEntry*(
     db: var DocDb,
     parent: DocEntryId, kind: DocEntryKind, name: PNode | PSym,
@@ -218,13 +234,18 @@ proc newDocEntry*(
 proc contains*(db: DocDb, ntype: PType | PNode | PSym): bool =
   ntype.headSym() in db.sigmap
 
+
 proc `[]`*(db: DocDb, ntype: PType | PNode | PSym): DocEntryId =
   let sym = headSym(ntype)
   if not sym.isNil() and sym in db.sigmap:
     return db.sigmap[sym]
 
   else:
-    assert false, "no doc entry for node " & $treeRepr(nil, ntype)
+    assert false, "no doc entry for node $# symdata was $# (in table $#)" % [
+      $treeRepr(nil, ntype),
+      hashdata(sym),
+      $(sym in db.sigmap)
+    ]
 
 
 

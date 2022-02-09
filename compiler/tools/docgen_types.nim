@@ -328,6 +328,7 @@ type
     deprecatedMsg*: Option[string] ## If entry was annotated with
     ## `{.deprecated.}` contains the pragma text.
     docs*: seq[DocTextId]
+    isLocal*: bool
 
     case kind*: DocEntryKind
       of ndkPackage:

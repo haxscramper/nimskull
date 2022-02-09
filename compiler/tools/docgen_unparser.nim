@@ -33,6 +33,7 @@ type
     deftField ## Object field declaration
     deftEnumField ## Enum field declaration
     deftAlias ## Type alias declaration
+    deftDistinct ## `distinct` declaration
 
   DefFieldKind* = enum
     ## Kind of the object declaration
@@ -82,9 +83,8 @@ type
         typ*: PNode
         initExpr*: PNode
 
-      of deftAlias:
+      of deftAlias, deftDistinct:
         baseType*: PNode
-        isDistinct*: bool
 
       of deftEnum:
         enumFields*: seq[DefTree]
@@ -278,10 +278,31 @@ proc unparseGenericParams*(node: PNode): seq[tuple[
     assert param.kind in {nkSym, nkIdent}, $treeRepr(nil, param)
     result.add((param, none PNode))
 
+proc whichTypedefKind*(node: PNode): DefTreeKind =
+  let node =
+    if node.kind in {nkTypeDef}:
+      node[2].skipNodes({nkPtrTy, nkRefTy})
+
+    else:
+      node
+
+  case node.kind:
+    of nkObjectTy: result = deftObject
+    of nkEnumTy: result = deftEnum
+    of nkDistinctTy: result = deftDistinct
+    of nkInfix, nkProcTy, nkSym, nkIdent, nkBracketExpr, nkTupleTy:
+      result = deftAlias
+
+    of nkEmpty:
+      result = deftMagic
+
+    else:
+      failNode node
+
 proc unparseType*(node: PNode): DefTree =
   let body = node[2].skipNodes({nkPtrTy, nkRefTy})
-  case body.kind:
-    of nkObjectTy:
+  case body.whichTypedefKind():
+    of deftObject:
       result = newDef(deftObject, unparseName(node[0]), node)
       if 0 < len(node.comment): result.docs = @[node]
 
@@ -290,7 +311,7 @@ proc unparseType*(node: PNode): DefTree =
       if body[1].kind == nkOfInherit:
         result.objBase = getBaseType(node)
 
-    of nkEnumTy:
+    of deftEnum:
       result = newDef(deftEnum, unparseName(node[0]), node)
       if 0 < len(body.comment): result.docs = @[node]
       for field in body[1..^1]:
@@ -304,20 +325,19 @@ proc unparseType*(node: PNode): DefTree =
         if 0 < len(field.comment):
           result.enumFields[^1].docs = @[field]
 
-    of nkDistinctTy:
-      result = newDef(deftAlias, unparseName(node[0]), node)
-      result.isDistinct = true
-      result.baseType = body[0]
-      if 0 < len(node.comment):
-        result.docs = @[node]
-
-    of nkInfix, nkProcTy, nkSym, nkIdent, nkBracketExpr, nkTupleTy:
+    of deftAlias:
       result = newDef(deftAlias, unparseName(node[0]), node)
       result.baseType = body
       if 0 < len(node.comment):
         result.docs = @[node]
 
-    of nkEmpty:
+    of deftDistinct:
+      result = newDef(deftDistinct, unparseName(node[0]), node)
+      result.baseType = body[0]
+      if 0 < len(node.comment):
+        result.docs = @[node]
+
+    of deftMagic:
       assert node[0].kind in {nkPragmaExpr}, $treeRepr(nil, node)
       result = newDef(deftMagic, unparseName(node[0]), node)
       if 0 < len(node.comment):

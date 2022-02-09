@@ -149,6 +149,13 @@ proc getEntryName(node: PNode): DefName =
 
 proc classifyDeclKind(db: DocDb, def: DefTree): DocEntryKind =
   case def.kind:
+    of deftArg: result = ndkArg
+    of deftLet, deftVar, deftConst: result = ndkVar
+    of deftMagic: result = ndkBuiltin
+    of deftField: result = ndkField
+    of deftEnumField: result = ndkEnumField
+    of deftDistinct: result = ndkDistinctAlias
+    of deftEnum: result = ndkEnum
     of deftProc:
       case def.node.kind:
         of nkProcDef:      result = ndkProc
@@ -162,18 +169,19 @@ proc classifyDeclKind(db: DocDb, def: DefTree): DocEntryKind =
           failNode def.node
 
 
+
+
     of deftObject:
       case def.getSName():
         of "CatchableError": result = ndkException
         of "Defect":         result = ndkDefect
         of "RootEffect":     result = ndkEffect
         else:
-          result =
-            if def.objBase.isNil():
-              ndkObject
+          if def.objBase.isNil():
+            result = ndkObject
 
-            else:
-              db[db[def.objBase]].kind
+          else:
+            result = db[db[def.objBase]].kind
 
     of deftAlias:
       if def.node.kind in {nkInfix}:
@@ -182,8 +190,7 @@ proc classifyDeclKind(db: DocDb, def: DefTree): DocEntryKind =
       else:
         result = ndkAlias
 
-    else:
-      assert false, "todo " & $def.kind
+
 
 proc getDeprecated(name: DefName): Option[string] =
   let depr = name.pragmas.filterPragmas(@["deprecated"])
@@ -213,7 +220,6 @@ proc updateCommon(
 
   if decl.exported:
     db[id].visibility = dvkPublic
-
 
 proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntryId =
   ## Register new procedure definition in the documentation database,
@@ -263,15 +269,21 @@ proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntry
 
     case node.kind:
       of nkSym:
-        if node.sym.kind in {skGenericParam, skVar, skLet, skConst, skForVar}:
-          var declKind = ndkVar
-          if node.sym.kind in {skGenericParam}:
-            declKind = ndkParam
+        case node.sym.kind:
+          of {skGenericParam, skVar, skLet, skConst, skForVar}:
+            var declKind = ndkVar
+            if node.sym.kind in {skGenericParam}:
+              declKind = ndkParam
 
-          let local = db.newDocEntry(parent, declKind, node)
+            let local = db.newDocEntry(parent, declKind, node)
+            db[local].isLocal = true
 
-          db[local].location = some db.add(node.nodeLocation())
-          db.addSigmap(node, local)
+          of skType:
+            let local = db.newDocEntry(parent, ndkObject, node)
+            db[local].isLocal = true
+
+          else:
+            discard
 
       else:
         for sub in node:
@@ -362,7 +374,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
         if not field.valOverride.isNil():
           db[fId].enumValueOverride = some field.valOverride
 
-    of deftAlias:
+    of deftAlias, deftDistinct:
       result = db.newDocEntry(
         visitor,
         db.classifyDeclKind(decl),
@@ -375,8 +387,9 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
       result = db.newDocEntry(
         visitor, ndkBuiltin, decl.nameNode())
 
-    else:
-      assert false, $decl.kind
+    of deftProc, deftArg, deftLet, deftVar,
+       deftConst, deftField, deftEnumField:
+      assert false, $decl.kind & " is not a type definition"
 
 proc registerDeclSection(
     db: var DocDb,
@@ -705,12 +718,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
   implicitTReprConf.extraSymInfo = proc(sym: PSym): ColText =
     result.add "sym location " & graph.config$sym.info
     result.add "\n"
-    result.add "hashdata [$#.$#.$#.$#]\n" % [
-      $sym.name.id,
-      $sym.info.fileIndex.int,
-      $sym.info.line,
-      $sym.info.col
-    ]
+    result.add "hashdata " & hashdata(sym) & "\n"
 
     if sym in back.db:
       result.add "db entry: "
