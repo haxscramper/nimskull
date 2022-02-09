@@ -210,7 +210,7 @@ proc newDocEntry*(
   ## get name, location. If node is a symbol also updates sigmap with new
   ## documentable entry.
   when name is PNode:
-    assert name.kind in {nkSym, nkIdent}, $name.kind
+    assert name.kind in {nkSym, nkIdent, nkAccQuoted}, $name.kind
 
   result = db.newDocEntry(kind, name.getSName(), context)
   db[result].location = some db.add(name.nodeLocation())
@@ -232,7 +232,8 @@ proc newDocEntry*(
   db[parent].nested.add result
 
 proc contains*(db: DocDb, ntype: PType | PNode | PSym): bool =
-  ntype.headSym() in db.sigmap
+  let sym = ntype.headSym()
+  return not sym.isNil() and sym in db.sigmap
 
 
 proc `[]`*(db: DocDb, ntype: PType | PNode | PSym): DocEntryId =

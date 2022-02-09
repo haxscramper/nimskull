@@ -595,11 +595,21 @@ proc `$`*(db: DocDb, id: DocEntryId): string =
 proc getSub*(db: DocDb, parent: DocEntryId, subName: string): DocEntryId =
   ## Get nested entry by name. Might return empty doc entry id if name is
   ## not found.
-  for sub in db[parent].nested:
-    if db[sub].name == subName:
-      return sub
+  var res: DocEntryId
+  proc aux(parent: DocEntryId): DocEntryId =
+    for sub in db[parent].nested:
+      if db[sub].name == subName:
+        return sub
 
-  assert false, "no nested documentable entry '" &
+    if db[parent].kind in ndkStructKinds:
+      for super in db[parent].superTypes:
+        result = aux(super)
+        if not result.isNil():
+          return
+
+  result = aux(parent)
+
+  assert not isNil(result), "no nested documentable entry '" &
     subName & "' for " & (db$parent)
 
 

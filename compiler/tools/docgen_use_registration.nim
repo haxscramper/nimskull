@@ -34,6 +34,38 @@ type
     ## context that will be passed to new documentable entry on construction.
     activeModule*: DocEntryId
 
+proc newDocEntry*(
+    db: var DocDb,
+    visitor: DocVisitor,
+    kind: DocEntryKind,
+    name: PNode
+  ): DocEntryId =
+
+  if visitor.parent.isSome():
+    db.newDocEntry(
+      kind = kind,
+      name = name,
+      parent = visitor.parent.get(),
+      context = visitor.declContext)
+
+  else:
+    db.newDocEntry(visitor.docUser, kind, name, visitor.declContext)
+
+proc newDocEntry*(
+    db: var DocDb,
+    visitor: DocVisitor,
+    parent: DocEntryId,
+    kind: DocEntryKind,
+    name: PNode
+  ): DocEntryId =
+
+  db.newDocEntry(
+    kind = kind,
+    name = name,
+    parent = parent,
+    context = visitor.declContext)
+
+
 
 iterator visitWhen*(visitor: DocVisitor, node: PNode): (DocVisitor, PNode) =
   ## Iterate over all branches in 'when' statement, yielding new visitor
@@ -202,7 +234,9 @@ proc exprTypeSym(n: PNode): PSym =
 proc registerProcBody(
     db: var DocDb, body: PNode, state: RegisterState, node: PNode) =
   let s = node[0].headSym()
-  if isNil(s) or isNil(db[s]):
+  if isNil(s) or
+     isNil(db[s]) or
+     s.kind notin skProcKinds:
     return
 
   var main = db[db[s]]
@@ -246,7 +280,13 @@ proc registerProcBody(
 
       of nkCall, nkCommand:
         let head = node[0].headSym()
-        if not isNil(head):
+        if isNil(head) or (
+          # `=destroy` or other auto-generated proc
+          head notin db and sfGeneratedOp in head.flags
+        ):
+          discard
+
+        else:
           main.calls.incl db[head]
           let raises = head.effectSpec(wRaises)
           if not raises.isEmptyTree():
@@ -421,8 +461,10 @@ proc registerSymbolUse(
         of rskAsgnTo:
           kind = dokVarWrite
 
-        of rskAsgnFrom, rskBracketHead, rskBracketArgs:
-          # `<??> = varSymbol`, `varSymbol[<??>]`, `??[varSymbol]`
+        of rskAsgnFrom, # `<??> = varSymbol`
+           rskBracketHead, # `varSymbol[<??>]`
+           rskPragma, # `{.???: varSymbol.}`
+           rskBracketArgs: # `??[varSymbol]`
           kind = dokVarRead
 
         of rskTopLevel:
@@ -452,11 +494,19 @@ proc registerSymbolUse(
           else:
             kind = dokLocalArgDecl
 
-
         else:
-          assert false, $state.state & $treeRepr(nil, node)
+          return
 
-      discard db.occur(node, kind, state)
+      if node in db:
+        discard db.occur(node, kind, state)
+
+      else:
+        # Technically /all/ symbols should have a mapped documentable
+        # entries, but for whacky nonsense like this, I decided to pretend
+        # this is not the case.
+        #
+        # `cast[proc (s: string)](showerrormessage2)(s)`
+        discard
 
     of skResult:
       # IDEA can be used to collect information about `result` vs
@@ -700,10 +750,21 @@ proc reg(
         if not isNil(headType.sym):
           let head = db[headType.sym]
           for fieldPair in node[1 ..^ 1]:
-            let field = fieldPair[0]
-            discard db.occur(
-              field, fieldPair, dokFieldSet, state,
-              idOverride = db.getSub(head, field.getSName()))
+            let key = fieldPair[0]
+            debug key
+            if key in db:
+              discard db.reg(key, state, fieldPair)
+
+            else:
+              # Sometimes it just /happens, at random/, and sem layer
+              # does not register fields as symbols, so have to get them
+              # by name here.
+              discard db.occur(
+                key, dokFieldSet, state,
+                idOverride = db.getSub(head, key.getSName()))
+
+
+            db.reg(fieldPair[1], state, fieldPair)
 
       db.reg(node[0], state, node)
       for subnode in node[1 ..^ 1]:

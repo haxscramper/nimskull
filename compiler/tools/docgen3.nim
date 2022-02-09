@@ -107,36 +107,6 @@ proc registerPreUses(
   aux(node, visitor)
 
 
-proc newDocEntry(
-    db: var DocDb,
-    visitor: DocVisitor,
-    kind: DocEntryKind,
-    name: PNode
-  ): DocEntryId =
-
-  if visitor.parent.isSome():
-    db.newDocEntry(
-      kind = kind,
-      name = name,
-      parent = visitor.parent.get(),
-      context = visitor.declContext)
-
-  else:
-    db.newDocEntry(visitor.docUser, kind, name, visitor.declContext)
-
-proc newDocEntry(
-    db: var DocDb,
-    visitor: DocVisitor,
-    parent: DocEntryId,
-    kind: DocEntryKind,
-    name: PNode
-  ): DocEntryId =
-
-  db.newDocEntry(
-    kind = kind,
-    name = name,
-    parent = parent,
-    context = visitor.declContext)
 
 
 proc getEntryName(node: PNode): DefName =
@@ -177,11 +147,11 @@ proc classifyDeclKind(db: DocDb, def: DefTree): DocEntryKind =
         of "Defect":         result = ndkDefect
         of "RootEffect":     result = ndkEffect
         else:
-          if def.objBase.isNil():
+          if def.objBase.isNone():
             result = ndkObject
 
           else:
-            result = db[db[def.objBase]].kind
+            result = db[db[def.objBase.get()]].kind
 
     of deftAlias:
       if def.node.kind in {nkInfix}:
@@ -220,6 +190,14 @@ proc updateCommon(
 
   if decl.exported:
     db[id].visibility = dvkPublic
+
+
+const nkEntryDeclarationKinds = nkProcDeclKinds + {
+  nkTypeDef, nkVarSection, nkLetSection, nkConstSection
+}
+
+proc registerEntryDef(
+  db: var DocDb, visitor: DocVisitor, node: PNode): seq[DocEntryId]
 
 proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntryId =
   ## Register new procedure definition in the documentation database,
@@ -262,30 +240,27 @@ proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntry
     db[arg].argType = argument.typ
     db[arg].argDefault = argument.initExpr
 
-  let parent = result
+  var visitor = visitor
+  visitor.docUser = result
   proc aux(node: PNode, db: var DocDb) =
-    if db.isFromMacro(node):
+    if db.isFromMacro(node) or isRunnableExamples(node):
       return
 
     case node.kind:
+      of nkEntryDeclarationKinds:
+        for decl in registerEntryDef(db, visitor, node):
+          db[decl].isLocal = true
+
       of nkSym:
-        case node.sym.kind:
-          of {skGenericParam, skVar, skLet, skConst, skForVar}:
-            var declKind = ndkVar
-            if node.sym.kind in {skGenericParam}:
-              declKind = ndkParam
-
-            let local = db.newDocEntry(parent, declKind, node)
-            db[local].isLocal = true
-
-          of skType:
-            let local = db.newDocEntry(parent, ndkObject, node)
-            db[local].isLocal = true
-
-          else:
-            discard
+        if node.sym.kind in {
+          skLet, # `except XXXX as e` introduces let symbol
+          skForVar # `for a in XXXX` creates new variable
+        } and node notin db:
+          let exceptAs = db.newDocEntry(visitor, ndkVar, node)
+          db[exceptAs].isLocal = true
 
       else:
+        # debug node
         for sub in node:
           aux(sub, db)
 
@@ -295,10 +270,17 @@ proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntry
 proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntryId =
   case decl.kind:
     of deftObject:
+      debug decl.node
       result = db.newDocEntry(
         visitor, db.classifyDeclKind(decl), decl.nameNode())
 
+      if decl.objBase.isSome():
+        let base = decl.objBase.get()
+        db[result].superTypes.add db[base]
+
       let objId = result
+
+
       var db = addr db
       # "'db' is of type <var DocDb> which cannot be captured as it would
       # violate memory safety". Yes, the `db` is a `ref` type, but I still
@@ -315,6 +297,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
 
         db[].updateCommon(result, head, visitor)
         db[][result].fieldType = head.typ
+
 
       proc auxField(field: DefField, visitor: DocVisitor): seq[DocEntryId] =
         case field.kind:
@@ -396,7 +379,7 @@ proc registerDeclSection(
     visitor: DocVisitor,
     node: PNode,
     nodeKind: DocEntryKind = ndkGlobalVar
-  ) =
+  ): seq[DocEntryId] =
   ## Register let, var or const declaration section
 
   case node.kind:
@@ -408,9 +391,10 @@ proc registerDeclSection(
           else: ndkGlobalLet
 
       for subnode in node:
-        db.registerDeclSection(visitor, subnode, nodeKind)
+        result.add db.registerDeclSection(
+          visitor, subnode, nodeKind)
 
-    of nkConstDef, nkIdentDefs:
+    of nkConstDef, nkIdentDefs, nkVarTuple:
       let defs = unparseDefs(node)
       for def in defs:
         let pragma = def.pragmas.filterPragmas(
@@ -420,6 +404,8 @@ proc registerDeclSection(
 
         var doc = db.newDocEntry(
           visitor, nodeKind, def.nameNode())
+
+        result.add doc
 
         db.updateCommon(doc, def, visitor)
 
@@ -433,20 +419,15 @@ proc registerGenericParams(db: var DocDb, def: DefTree, user: DocEntryId) =
     # echo "[[REGISTERED GENERIC PARAM]]"
     # debug name, implicitTReprConf + trfPackedFields
 
-proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
-  if db.isFromMacro(node):
-    return
-
+proc registerEntryDef(
+  db: var DocDb, visitor: DocVisitor, node: PNode): seq[DocEntryId] =
   case node.kind:
     of nkProcDeclKinds:
       let def = unparseDefs(node)[0]
       var doc = db.registerProcDef(visitor, def)
       db.updateCommon(doc, def, visitor)
       db.registerGenericParams(def, doc)
-
-    of nkTypeSection:
-      for typeDecl in node:
-        registerTopLevel(db, visitor, typeDecl)
+      result = @[doc]
 
     of nkTypeDef:
       let def = unparseDefs(node)[0]
@@ -454,13 +435,30 @@ proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
       assert not doc.isNil()
       db.updateCommon(doc, def, visitor)
       db.registerGenericParams(def, doc)
+      result = @[doc]
+
+    of nkVarSection, nkLetSection, nkConstSection:
+      result = db.registerDeclSection(visitor, node)
+
+    else:
+      failNode node
+
+
+proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
+  if db.isFromMacro(node):
+    return
+
+  case node.kind:
+    of nkEntryDeclarationKinds:
+      discard db.registerEntryDef(visitor, node)
 
     of nkStmtList:
       for subnode in node:
         db.registerTopLevel(visitor, subnode)
 
-    of nkVarSection, nkLetSection, nkConstSection:
-      db.registerDeclSection(visitor, node)
+    of nkTypeSection:
+      for typeDecl in node:
+        registerTopLevel(db, visitor, typeDecl)
 
     of nkWhenStmt:
       for (visitor, body) in visitWhen(visitor, node):

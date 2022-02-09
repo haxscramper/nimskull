@@ -82,6 +82,7 @@ type
       of deftIdentKinds:
         typ*: PNode
         initExpr*: PNode
+        initExprIdx*: Option[int]
 
       of deftAlias, deftDistinct:
         baseType*: PNode
@@ -95,7 +96,7 @@ type
 
       of deftObject:
         objFields*: seq[DefField]
-        objBase*: PNode
+        objBase*: Option[PNode]
 
       of deftMagic:
         discard
@@ -265,18 +266,18 @@ proc unparseFields*(node: PNode): seq[DefField] =
 
 proc unparseDefs*(node: PNode): seq[DefTree]
 
-proc getBaseType*(node: PNode): PNode =
-  let body = node.skipNodes({nkRefTy, nkPtrTy})
-  if body[1].kind == nkOfInherit:
-    return body[1][0]
-
 proc unparseGenericParams*(node: PNode): seq[tuple[
   name: PNode, constraint: Option[PNode]]] =
 
   assert node.kind in {nkGenericParams, nkEmpty}, $treeRepr(nil, node)
   for param in node:
-    assert param.kind in {nkSym, nkIdent}, $treeRepr(nil, param)
-    result.add((param, none PNode))
+    assert param.kind in {nkSym, nkIdent, nkIdentDefs}, $treeRepr(nil, param)
+    if param.kind == nkIdentDefs:
+      for name in param[0..^3]:
+        result.add((name, some param[^2]))
+
+    else:
+      result.add((param, none PNode))
 
 proc whichTypedefKind*(node: PNode): DefTreeKind =
   let node =
@@ -309,7 +310,8 @@ proc unparseType*(node: PNode): DefTree =
       result.objFields = unparseFields(body[2])
 
       if body[1].kind == nkOfInherit:
-        result.objBase = getBaseType(node)
+        debug body[1]
+        result.objBase = some body[1][0]
 
     of deftEnum:
       result = newDef(deftEnum, unparseName(node[0]), node)
@@ -385,6 +387,7 @@ proc getRecComment*(n: PNode): seq[PNode] =
     result = aux(n)
 
 proc unparseProcDef*(node: PNode): DefTree =
+  assert node.kind in nkProcDeclKinds, $node.kind
   result = newDef(deftProc, unparseName(node[0]), node)
   if node[pragmasPos].kind == nkPragma:
     for arg in node[pragmasPos]:
@@ -419,7 +422,12 @@ proc unparseDefs*(node: PNode): seq[DefTree] =
       result.add unparseType(node)
 
     of nkConstDef, nkIdentDefs:
-      result = unparseIdentDefs(node):
+      result = unparseIdentDefs(node)
+
+    of nkVarTuple:
+      result = unparseIdentDefs(node)
+      for idx, _ in result:
+        result[idx].initExprIdx = some idx
 
     of nkProcDeclKinds:
       result.add unparseProcDef(node)
