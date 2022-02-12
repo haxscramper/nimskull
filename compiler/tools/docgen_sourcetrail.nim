@@ -3,6 +3,7 @@ import
     sequtils,
     with,
     tables,
+    strformat,
     os
   ],
   ast/[
@@ -248,10 +249,7 @@ proc recordSymbol*(
     hierarchy: varargs[tuple[prefix, name, postfix: string]]
   ): cint =
 
-  result = writer.recordSymbol(
-    ("::", toSeq(hierarchy)),
-    symbolKind
-  )
+  result = writer.recordSymbol((".", toSeq(hierarchy)), symbolKind)
 
 
 proc toRange(fileId: cint, codeRange: DocLocation): SourcetrailSourceRange =
@@ -277,10 +275,14 @@ proc getFile(writer: var SourcetrailDBWriter, path, lang: string): cint =
 type
   IdMap* = object
     docToTrail: Table[DocEntryId, cint]
+    localToTrail: Table[DocEntryId, cint]
     fileToTrail: Table[FileIndex, cint]
     db: DocDb
 
-proc toTrail(kind: DocOccurKind, lastDeclare: DocOccurKind): SourcetrailReferenceKind =
+proc toTrail(
+    kind: DocOccurKind,
+    lastDeclare: DocOccurKind): SourcetrailReferenceKind =
+
   case kind:
     of dokLocalKinds:
       assert false
@@ -327,29 +329,26 @@ proc registerUses*(
   var lastDeclare: DocOccurKind
   for id, occur in db.occurencies:
     let fileId = idMap.fileToTrail[db[occur.loc].file]
+    var userId = idMap.docToTrail[occur.user]
 
-    var userId: cint
-    if occur.user.isSome():
-      userId = idMap.docToTrail[occur.user.get()]
-
-    if occur.kind in dokLocalKinds:
+    if db[occur.refid].kind in ndkLocalKinds:
       discard writer.recordLocalSymbolLocation(
-        writer.recordLocalSymbol(db[occur.refid].name & $occur.refid.int),
-        toRange(fileId, db[occur.loc]))
-
-    elif occur.refid.isNil():
-      discard
+        idMap.localToTrail[occur.refid], toRange(fileId, db[occur.loc]))
 
     elif occur.kind in {
-      dokObjectDeclare, dokCallDeclare,
-      dokAliasDeclare, dokEnumDeclare,
-      dokGlobalVarDecl, dokEnumFieldDeclare,
+      dokObjectDeclare,
+      dokCallDeclare,
+      dokAliasDeclare,
+      dokEnumDeclare,
+      dokGlobalVarDecl,
+      dokEnumFieldDeclare,
       dokFieldDeclare
     }:
-      userId = idMap.docToTrail[occur.refid]
-      lastDeclare = occur.kind
-      discard writer.recordSymbolLocation(
-        userId, toRange(fileId, db[occur.loc]))
+      if db[occur.refid].kind notin ndkLocalKinds:
+        userId = idMap.docToTrail[occur.refid]
+        lastDeclare = occur.kind
+        discard writer.recordSymbolLocation(
+          userId, toRange(fileId, db[occur.loc]))
 
     elif occur.kind in {dokImported}:
       when false:
@@ -386,14 +385,21 @@ proc registerUses*(
             ),
             toRange(fileId, part.loc))
 
-    else:
-      let targetId = idMap.docToTrail[occur.refid]
-
+    elif occur.kind notin dokLocalKinds:
       let refSym = writer.recordReference(
-        userId, targetId, occur.kind.toTrail(lastDeclare))
+        userId,
+        idMap.docToTrail[occur.refid],
+        occur.kind.toTrail(lastDeclare))
+
+      echo &"occur of {db$occur.refid} in {db$occur.loc}"
 
       discard writer.recordReferenceLocation(
         refSym, toRange(fileId, db[occur.loc]))
+
+    else:
+      echo db $ occur.refid
+      echo db $ id
+
 
 iterator parents(db: DocDb, id: DocEntryId): DocEntryId =
   var buf: seq[DocEntryId] = @[id]
@@ -460,26 +466,38 @@ proc toTrail(kind: DocEntryKind): SourcetrailSymbolKind =
      sskMethod
 
 
-proc registerDb*(writer: var SourcetrailDBWriter, idMap: IdMap, db: DocDb): IdMap =
+proc registerDb*(
+    writer: var SourcetrailDBWriter, idMap: IdMap, db: DocDb): IdMap =
   result = idMap
+  proc toRange(loc: DocLocationId): auto =
+    let
+      loc = db[loc]
+      fileId = idMap.fileToTrail[loc.file]
+
+    return toRange(fileId, loc)
+
+  proc toRange(loc: DocExtentId): auto =
+    let
+      loc = db[loc]
+      fileId = idMap.fileToTrail[loc.file]
+
+    return toRange(fileId, loc)
+
   for id, entry in db.entries:
-    if (entry.kind in {ndkPackage} and entry.name == "") or
-       (entry.kind in ndkLocalKinds):
+    if entry.kind in ndkLocalKinds:
+      result.localToTrail[id] = writer.recordLocalSymbol($id.int)
+
+    elif (entry.kind in {ndkPackage} and entry.name == ""):
       continue
 
-    let symId = writer.recordSymbol(db.toTrailName(id), entry.kind.toTrail())
-
-    result.docToTrail[id] = symId
-
-    if entry.location.isSome():
-      let
-        loc = db[entry.location.get()]
-        fileId = idMap.fileToTrail[loc.file]
-        extent = toRange(fileId, loc)
-      discard writer.recordSymbolLocation(symId, extent)
-
-      if entry.kind notin {ndkModule, ndkFile}:
-        discard writer.recordSymbolScopeLocation(symId, extent)
+    else:
+      let symId = writer.recordSymbol(db.toTrailName(id), entry.kind.toTrail())
+      result.docToTrail[id] = symId
+      if entry.location.isSome():
+        discard writer.recordSymbolLocation(symId, toRange(entry.location.get()))
+        if entry.kind notin {ndkModule, ndkFile}:
+          discard writer.recordSymbolScopeLocation(
+            symId, toRange(entry.extent.get()))
 
 
 proc open*(writer: var SourcetrailDBWriter, file: AbsoluteFile) =

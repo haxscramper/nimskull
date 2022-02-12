@@ -167,17 +167,17 @@ proc getDeprecated(name: DefName): Option[string] =
   let depr = name.pragmas.filterPragmas(@["deprecated"])
   if 0 < len(depr):
     let depr = depr[0]
-    if depr.safeLen == 0:
-      return some ""
+    if depr.kind == nkExprColonExpr:
+      result = some depr[1].getSName()
 
     else:
-      return some depr[1].getSName()
-
+      result = some ""
 
 proc updateCommon(
     db: var DocDb, id: DocEntryId, decl: DefTree, visitor: DocVisitor) =
   ## Update common fields from the unparsed definition tree
-  db[id].deprecatedMsg = getDeprecated(decl.name)
+  # Set deprecation message
+  db.setDeprecatedMsg(id, getDeprecated(decl.name))
   # Store location of the entry declaration
   db[id].location = some db.add(decl.nameNode().nodeLocation())
   # Store full declaration extent
@@ -419,8 +419,6 @@ proc registerDeclSection(
 proc registerGenericParams(db: var DocDb, def: DefTree, user: DocEntryId) =
   for (name, constraint) in def.genericParams:
     discard db.newDocEntry(user, ndkParam, name)
-    # echo "[[REGISTERED GENERIC PARAM]]"
-    # debug name, implicitTReprConf + trfPackedFields
 
 proc registerEntryDef(
   db: var DocDb, visitor: DocVisitor, node: PNode): seq[DocEntryId] =
@@ -713,26 +711,33 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
   ## Setup necessary documentation pass context for module graph.
   # Persistent data storage for all documentable entries. The data persists
   # across all open/close triggers.
-  var back = DocBackend(db: DocDb())
-
+  var db = DocDb()
   implicitTReprConf.incl trfShowSymId
   implicitTReprConf.extraSymInfo = proc(sym: PSym): ColText =
     result.add "sym location " & graph.config$sym.info
     result.add "\n"
     result.add "hashdata " & hashdata(sym) & "\n"
 
-    if sym in back.db:
+    if sym in db:
       result.add "db entry: "
-      result.add back.db $ back.db[sym]
+      result.add db $ db[sym]
 
     else:
       result.add "[NO DB ENTRY]" + fgRed + styleReverse
 
+  implicitDebugConfRef = graph.config
   implicitTReprConf.extraNodeInfo = proc(node: PNode): ColText =
     result.add "node location " & graph.config$node.info
+    if node.kind in {nkIdent, nkSym}:
+      if node.approxLoc() in db.locationSigmap:
+        result.add "\n"
+        result.add "APPROX MAP: " + fgGreen
+        result.add db$db.locationSigmap[node.approxLoc()]
 
+      else:
+        result.add ("\nNO APPROX LOC" + fgYellow) + styleReverse
 
-  graph.backend = back
+  graph.backend = DocBackend(db: db)
 
   let preSemPass = makePass(
     TPassOpen(docPreSemOpen),
@@ -763,8 +768,8 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
 
       let context = DocPreContext(
         graph: graph,
-        db: back.db,
-        docModule: back.db.newDocEntry(
+        db: db,
+        docModule: db.newDocEntry(
           ndkFile, conf[idx].projPath.string)
       )
 
@@ -776,7 +781,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
       ):
         discard docPreSemProcess(context, statement)
 
-  return back.db
+  return db
 
 
 
@@ -861,8 +866,8 @@ proc writeJsonLines*(conf: ConfigRef, db: DocDb) =
       "visibility": $entry.visibility
     }
 
-    if entry.deprecatedMsg.isSome():
-      res["deprecated"] = %entry.deprecatedMsg.get()
+    if db.hasDeprecatedMsg(id):
+      res["deprecated"] = %db.getDeprecatedMsg(id)
 
     if entry.location.isSome():
       let loc = db[entry.location.get()]

@@ -10,6 +10,7 @@ import
     strutils,
     strformat,
     os,
+    tables,
     times,
     typetraits
   ],
@@ -115,16 +116,20 @@ proc bindParam[E: enum](ps: SqlPrepared, idx: int, opt: E) =
 
 proc bindParam(
     ps: SqlPrepared, idx: int,
-    it: FileIndex | DocEntryId | DocOccurId | uint16 | int | bool |
-        DocLocationId | DocExtentId | DocTextId
+    it: FileIndex | uint16 | int | bool
   ) =
 
   bindParam(ps, idx, it.int)
 
+proc bindParam(
+    ps: SqlPrepared, idx: int,
+    it: DocEntryId | DocOccurId | DocLocationId | DocExtentId | DocTextId) =
+  if not isNil(it):
+    bindParam(ps, idx, it.int)
+
 const
   sqPrimary = " PRIMARY KEY UNIQUE NOT NULL"
   sqNNil = " NOT NULL"
-
 
 template withPrepared(conn: DbConn, prepCode: SqlPrepared, body: untyped): untyped =
   block:
@@ -156,20 +161,61 @@ const tab = (
   docmap: "docMap"
 )
 
+func refs(name: string): string = " REFERENCES " & name
+
+func toSqlite(t: typedesc[DocEntryId]): string = sq(int) & refs(tab.entr)
+func toSqlite(t: typedesc[DocOccurId]): string = sq(int) & refs(tab.occur)
+func toSqlite(t: typedesc[FileIndex]): string = sq(int) & refs(tab.files)
+func toSqlite(t: typedesc[DocLocationId]): string = sq(int) & refs(tab.loc)
+func toSqlite(t: typedesc[DocExtentId]): string = sq(int) & refs(tab.ext)
+func toSqlite(t: typedesc[DocTextId]): string = sq(int) & refs(tab.docmap)
+
+
+proc writeTable*[K, V](conn: DbConn, table: Table[K, V], tabname, keyname, valname: string) =
+  withPrepared(conn, conn.newTableWithInsert(tabname, {
+    (keyname, 1): sq(K),
+    (valname, 2): sq(V)
+  })):
+    for key, val in pairs(table):
+      prep.bindParam(1, key)
+      prep.bindParam(2, val)
+      conn.doExec(prep)
+
+proc readTable*[K, V, T](
+    conn: DbConn, table: var Table[K, V], tabname: string, rows: typedesc[T]
+  ) =
+
+  for (key, val) in conn.typedRows(tabname, T):
+    table[key] = val
+
+
+proc writeTable*[K, V](
+    conn: DbConn, table: Table[K, seq[V]],
+    tabname, keyname, valname: string
+  ) =
+
+  withPrepared(conn, conn.newTableWithInsert(tabname, {
+    (keyname, 1): sq(K),
+    (valname, 2): sq(V)
+  })):
+    for key, val in pairs(table):
+      for item in val:
+        prep.bindParam(1, key)
+        prep.bindParam(2, val)
+        conn.doExec(prep)
+
+proc readTable*[K, V, T](
+    conn: DbConn, table: var Table[K, seq[V]], tabname: string, rows: typedesc[T]
+  ) =
+  for (key, val) in conn.typedRows(tabname, T):
+    table.mgetOrPut(key).add val
+
 proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
   var conn = open(file.string, "", "", "")
 
   conn.exec(sql"BEGIN TRANSACTION")
 
-  func refs(name: string): string = " REFERENCES " & name
-
-  func toSqlite(t: typedesc[DocEntryId]): string = sq(int) & refs(tab.entr)
-  func toSqlite(t: typedesc[DocOccurId]): string = sq(int) & refs(tab.occur)
-  func toSqlite(t: typedesc[FileIndex]): string = sq(int) & refs(tab.files)
-  func toSqlite(t: typedesc[DocLocationId]): string = sq(int) & refs(tab.loc)
-  func toSqlite(t: typedesc[DocExtentId]): string = sq(int) & refs(tab.ext)
-  func toSqlite(t: typedesc[DocTextId]): string = sq(int) & refs(tab.docmap)
-
+  conn.writeTable(db.deprecatedMsg, "deprecated", "id", "msg")
 
   withPrepared(conn, conn.newTableWithInsert(tab.docmap, {
     ("entry", 1): sq(DocEntryId),
@@ -221,7 +267,8 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
     ("kind", 3): sq(DocEntryKind),
     ("location", 4): sq(DocLocationId),
     ("extent", 5): sq(DocExtentId),
-    ("parent", 6): sq(DocEntryId)
+    ("parent", 6): sq(DocEntryId),
+    ("local", 7): sq(bool)
   })):
     for id, entry in db.entries:
       with prep:
@@ -233,10 +280,12 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
         prep.bindParam(4, entry.location.get())
 
       if entry.extent.isSome():
-        prep.bindParam(5, entry.location.get())
+        prep.bindParam(5, entry.extent.get())
 
       if entry.parent.isSome():
         prep.bindParam(6, entry.parent.get())
+
+      prep.bindParam(7, entry.isLocal)
 
       conn.doExec(prep)
 
@@ -279,18 +328,15 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
   withPrepared(conn, conn.newTableWithInsert(tab.occur, {
     ("id", 1): sq(int) & sqPrimary,
     ("kind", 2): sq(DocOccurKind),
-    ("refid", 3): sq(DocEntryId),
+    ("refid", 3): sq(int) & sqNNil,
     ("loc", 4): sq(DocLocationId)
   })):
     for id, occur in db.occurencies:
       with prep:
         bindParam(1, id)
         bindParam(2, occur.kind)
-
-      if occur.kind notin dokLocalKinds:
-        prep.bindParam(3, occur.refid)
-
-      prep.bindParam(4, occur.loc)
+        bindParam(3, occur.refid)
+        bindParam(4, occur.loc)
 
       conn.doExec prep
 
@@ -379,22 +425,29 @@ proc readSqlite*(conf: ConfigRef, db: var DocDb, file: AbsoluteFile) =
 
     doAssert row.id.int == conf.m.fileInfos.high
 
-  for (id, name, kind, loc, ext, parent) in conn.typedRows(tab.entr, tuple[
+  conn.readTable(
+    db.deprecatedMsg, "deprecated", tuple[id: DocEntryId, msg: string])
+
+  for (
+    id, name, kind, loc, ext, parent, local
+  ) in conn.typedRows(tab.entr, tuple[
     id: DocEntryId,
     name: string,
     kind: DocEntryKind,
     location: Option[DocLocationId],
     extent: Option[DocExtentId],
-    parent: Option[DocEntryId]
+    parent: Option[DocEntryId],
+    local: bool
   ]):
     doAssert id == db.add(DocEntry(
       name: name,
       kind: kind,
       location: loc,
-      extent: ext
+      extent: ext,
+      isLocal: local,
+      parent: parent
     ))
 
-    db[id].parent = parent
     if parent.isSome():
       db[parent.get()].nested.add id
 
@@ -431,11 +484,8 @@ proc readSqlite*(conf: ConfigRef, db: var DocDb, file: AbsoluteFile) =
     refid: DocEntryId,
     loc: DocLocationId
   ]):
-    var occur = DocOccur(kind: kind, loc: loc)
-    if kind notin dokLocalKinds:
-      occur.refid = refid
-
-    doAssert id == db.add(occur)
+    doAssert id == db.add(DocOccur(
+      kind: kind, loc: loc, refid: refid))
 
   for (id, text, runnable, implicit, location) in conn.typedRows(tab.docs, tuple[
     id: DocTextId,

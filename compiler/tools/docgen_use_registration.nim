@@ -122,7 +122,7 @@ type
     localUser: Option[DocEntryId]
     moduleId*: DocEntryId
     visitor: DocVisitor
-    user*: Option[DocEntryId]
+    user*: DocEntryId
     hasInit: bool
     allowMacroNodes: bool ## Allow to record information about usages in
     ## code generated form macro expansions.
@@ -132,18 +132,9 @@ proc `+`(state: RegisterState, kind: RegisterStateKind): RegisterState =
   result.state.add kind
 
 proc `+`(state: RegisterState, user: DocEntryId): RegisterState =
+  assert not user.isNil()
   result = state
-  if not user.isNil():
-    result.user = some user
-
-proc `+`(state: RegisterState, user: Option[DocEntryId]): RegisterState =
-  result = state
-  if result.user.isNone() or (result.user.isSome() and user.isSome()):
-    if user.isSome() and user.get().isNil():
-      discard
-
-    else:
-      result.user = user
+  result.user = user
 
 proc `+=`(state: var RegisterState, kind: RegisterStateKind) =
   state.state.add kind
@@ -364,11 +355,11 @@ proc registerSymbolUse(
     node: PNode,
     state: RegisterState,
     parent: PNode
-  ): Option[DocEntryId] =
+  ) =
 
   assert node.kind == nkSym
-
-  case node.sym.kind:
+  let sym = node.sym
+  case sym.kind:
     of skType:
       if state.top() == rskExport:
         db[state.moduleId].exports.incl db[node]
@@ -405,11 +396,9 @@ proc registerSymbolUse(
         else:
           discard db.occur(node, useKind, state)
 
-        if useKind in {dokEnumDeclare, dokObjectDeclare, dokAliasDeclare}:
-          result = some db[node]
 
     of skEnumField:
-      let sym = node.sym
+      let sym = sym
       if sym notin db:
         # For some unknown reason when enum declaration is seen by the
         # entry registration it still has `nkIdent` for field defintions,
@@ -426,8 +415,8 @@ proc registerSymbolUse(
         discard db.occur(node, dokEnumFieldUse, state)
 
     of skField:
-      if not node.sym.owner.isNil():
-        let id = db[node.sym.owner]
+      if not sym.owner.isNil():
+        let id = db[sym.owner]
         if db[id].kind in {ndkObject}:
           # Tuple typedefs can also have fields, but we are not tracking
           # them here since `tuple[]` /type/ is not a documentable entry.
@@ -436,12 +425,11 @@ proc registerSymbolUse(
             idOverride = db.getSub(id, $node))
 
     of skProcDeclKinds:
-      if node.sym notin db:
+      if sym notin db:
         discard "FIXME find why called /symbol/ is not registered in the DB"
 
       elif state.top() == rskProcHeader:
         discard db.occur(node, dokCallDeclare, state)
-        result = some db[node]
 
       elif state.top() == rskExport:
         db[state.moduleId].exports.incl db[node]
@@ -542,14 +530,17 @@ proc reg(
     node: PNode,
     state: RegisterState,
     parent: PNode
-  ): Option[DocEntryId] {.discardable.} =
+  ) =
 
   if db.isFromMacro(node) and not state.allowMacroNodes:
+    db.reg(getExpansionOriginal(db, node), state, parent)
     return
+
+  assert not state.user.isNil()
 
   case node.kind:
     of nkSym:
-      result = registerSymbolUse(db, node, state, parent)
+      registerSymbolUse(db, node, state, parent)
 
     of nkIdent:
       if not state.switchId.isNil():
@@ -569,16 +560,19 @@ proc reg(
       elif state.top() == rskObjectFields:
         discard db.occur(
           node, dokFieldDeclare, state,
-          idOverride = db.getSub(state.user.get, $node))
+          idOverride = db.getSub(state.user, $node))
 
     of nkCommentStmt,
        nkEmpty,
-       nkStrKinds,
        nkFloatKinds,
        nkNilLit:
       discard
       # TODO store list of all the hardcoded magics in the code -
       # nonstandard float and integer literals, formatting strings etc.
+
+    of nkStrKinds:
+      # TODO register list of all string literals in code.
+      discard
 
     of nkIntKinds:
       if not isNil(node.typ) and
@@ -596,22 +590,26 @@ proc reg(
               idOverride = db[enField])
 
     of nkPragmaExpr:
-      result = db.reg(node[0], state, node)
-      db.reg(node[1], state + rskPragma + result, node)
+      db.reg(node[0], state, node)
+      db.reg(node[1], state + rskPragma, node)
 
     of nkIdentDefs, nkConstDef:
-      var state = state
+      # HACK using last name in the identifier list here, but in general it
+      # is not possible to cleanly attach the 'user' part here, unless I
+      # run analysis on the `^2` and `^1` for each newly declared variable.
+      var state = state + db[headSym(node[^3])]
       state.hasInit = not isEmptyTree(node[2])
 
       for ident in node[0 .. ^3]:
         # Variable declaration
-        result = db.reg(ident, state + rskAsgnTo, node)
+        db.reg(ident, state + rskAsgnTo, node)
+
 
       # Adding `result` to the state so we can register use of type /by/ a
       # variable
-      db.reg(node[^2], state + rskTypeName + result, node)
+      db.reg(node[^2], state + rskTypeName, node)
       # Use if expression by a variable
-      db.reg(node[^1], state + result + rskAsgnFrom, node)
+      db.reg(node[^1], state + rskAsgnFrom, node)
 
     of nkImportStmt:
       for subnode in node:
@@ -635,13 +633,16 @@ proc reg(
     of nkPragma:
       # TODO implement for pragma uses
       for subnode in node:
-        result = db.reg(subnode, state + rskPragma, node)
+        db.reg(subnode, state + rskPragma, node)
 
     of nkAsmStmt:
       # IDEA possible analysis of passthrough code?
       discard
 
     of nkCall, nkConv:
+      if isRunnableExamples(node):
+        return
+
       if node.kind == nkCall and "defined" in $node:
         db.reg(node[1], state + rskDefineCheck, node)
 
@@ -654,26 +655,19 @@ proc reg(
             db.reg(subnode, state, node)
 
     of nkProcDeclKinds:
-      result = db.reg(node[0], state + rskProcHeader, node)
-      let sym = node[0].headSym()
-      if not sym.isNil() and sym notin db and state.user.isSome():
-        discard db.newDocEntry(
-          kind = ndkProc,
-          name = sym,
-          parent = state.user.get()
-        )
-
-      # IDEA process TRM macros/pattern susing different state constraints.
-      db.reg(node[1], state + rskProcHeader + result, node)
-      db.reg(node[2], state + rskProcHeader + result, node)
-      db.reg(node[3][0], state + rskProcReturn + result, node)
+      db.reg(node[0], state + rskProcHeader, node)
+      let state = state + db[headSym(node[0])]
+      # IDEA process TRM macros/pattern using different state constraints.
+      db.reg(node[1], state + rskProcHeader, node)
+      db.reg(node[2], state + rskProcHeader, node)
+      db.reg(node[3][0], state + rskProcReturn, node)
       for n in node[3][1 ..^ 1]:
-        db.reg(n, state + rskProcArgs + result, node)
+        db.reg(n, state + rskProcArgs, node)
 
-      db.reg(node[4], state + rskProcHeader + result, node)
-      db.reg(node[5], state + rskProcHeader + result, node)
+      db.reg(node[4], state + rskProcHeader, node)
+      db.reg(node[5], state + rskProcHeader, node)
 
-      db.reg(node[6], state + result, node)
+      db.reg(node[6], state, node)
 
       db.registerProcBody(node[6], state, node)
 
@@ -713,7 +707,8 @@ proc reg(
         else:                  rskTypeHeader
 
 
-      var state = state
+      var state = state + db[headSym(node[0])]
+
       if state.top() != rskTopLevel and node[0] notin db:
         # Inner type declaration, they are not tracked into any
         # documentable entries for now.
@@ -778,7 +773,13 @@ proc reg(
         db.reg(body, state, node)
 
     of nkPostfix:
-      db.reg(node[1], state, node)
+      return db.reg(node[1], state, node)
+
+    of nkAccQuoted:
+      for sub in node:
+        let tmp = db.reg(sub, state, node)
+        if tmp.isSome() and not tmp.get().isNil():
+          result = tmp
 
     else:
       var state = state
@@ -790,6 +791,8 @@ proc reg(
       for subnode in node:
         # debug node
         db.reg(subnode, state, node)
+
+
 
 
 proc registerUses*(db: var DocDb, node: PNode, state: RegisterState) =

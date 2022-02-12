@@ -848,7 +848,7 @@ proc setImplicitDebugConfRef*(conf: ConfigRef) {.dbg.} =
   hack:
     implicitDebugConfRef = conf
 
-proc debugAst*(it: PNode) {.exportc, dbg.} =
+func debugAst*(it: PNode) {.exportc, dbg.} =
   ## Print out tree representation of the AST node.
   ##
   ## .. note:: there is no `ConfigRef` argument, and because of that some
@@ -861,13 +861,13 @@ proc debugAst*(it: PNode) {.exportc, dbg.} =
   hack:
     echo treeRepr(implicitDebugConfRef, it, implicitTReprConf)
 
-proc debugType*(it: PType) {.exportc, dbg.} =
+func debugType*(it: PType) {.exportc, dbg.} =
   ## Print out tree represntation of the type. Can also be used in gdb
   ## debugging session due to `.exportc.` annotation
   hack:
     echo treeRepr(implicitDebugConfRef, it, implicitTReprConf)
 
-proc debugSym*(it: PSym) {.exportc, dbg.} =
+func debugSym*(it: PSym) {.exportc, dbg.} =
   ## Print out tree represntation of the symbol. Can also be used in gdb
   ## debugging session due to `.exportc.` annotation
   hack:

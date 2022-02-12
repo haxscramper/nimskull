@@ -3,6 +3,7 @@ import
   experimental/dod_helpers,
   std/[
     options,
+    macros,
     intsets,
     tables,
     hashes,
@@ -77,10 +78,11 @@ type
 
 
   DocProcKind* = enum
-    dpkRegular = "regular"
-    dpkOperator = "operator"
-    dpkConstructor = "=init"
-    dpkDestructor = "=destroy"
+    dpkRegular = "regular" ## Regular user-defined procedure
+    dpkOperator = "operator" ## Infix/prefix operator
+    dpkConstructor = "=init" ## Constructor procedure like `init()`,
+                             ## `initT()` or `newT()`
+    dpkDestructor = "=destroy" ## Explicitly declared destructor
     dpkMoveOverride = "=sink"
     dpkCopyOverride = "=copy"
     dpkAsgnOverride = "asgn"
@@ -95,7 +97,7 @@ const
     ndkObject, ndkDefect, ndkException, ndkEffect
   }
 
-  ndkLocalKinds* = { ndkArg, ndkInject, ndkVar }
+  ndkLocalKinds* = { ndkArg, ndkInject, ndkVar, ndkParam }
   ndkNewtypeKinds* = { ndkObject .. ndkDistinctAlias }
   ndkProcKinds* = { ndkProc .. ndkConverter }
   ndkAliasKinds* = { ndkTypeclass, ndkAlias, ndkDistinctAlias }
@@ -139,7 +141,6 @@ type
     dokGlobalVarDecl= "globalDecl"
     # local section end
 
-
     dokFieldUse = "fieldUse"
     dokFieldSet = "fieldSet"
     dokEnumFieldUse = "enumFieldUse"
@@ -161,6 +162,7 @@ type
 
 
 const
+  dokVarUse* = { dokVarWrite, dokVarRead }
   dokLocalKinds* = {dokLocalArgDecl .. dokLocalVarDecl }
   dokLocalDeclKinds* = dokLocalKinds
 
@@ -208,9 +210,14 @@ type
     ## storage is implemented
     ## (https://github.com/nim-works/nimskull/discussions/113) this will be
     ## replaced by extra data table associated with each token.
-    user*: Option[DocEntryId] ## For occurence of global documentable
-    ## entry - lexically scoped parent (for function call - callee, for
-    ## type - parent composition).
+    user*: DocEntryId ## For occurence of global documentable entry -
+    ## lexically scoped parent (for function call - callee, for type -
+    ## parent composition).
+    ##
+    ## For toplevel occurence of the global documentable entry (first
+    ## encounter of the procedure declaration) - main module. This
+    ## conflates with 'nested' relation a little, but only for explicitly
+    ## declared entries.
     localUser*: Option[DocEntryId]
     inExpansionOf*: Option[ExpansionId]
 
@@ -328,8 +335,6 @@ type
     ## extra information about owner/type/generic parameters and so on.
     visibility*: DocVisibilityKind ## Entry visibility from the
     ## documentation reader prespective
-    deprecatedMsg*: Option[string] ## If entry was annotated with
-    ## `{.deprecated.}` contains the pragma text.
     docs*: seq[DocTextId] ## Sequence of the associated documentation chunk
     ## IDs.
     isLocal*: bool ## Entry was declared in the local scope - nested
@@ -406,6 +411,8 @@ type
   ApproximateSymbolLocation* = tuple[nameId, file, col, line: int]
 
   DocDb* = ref object of RootRef
+    deprecatedMsg*: Table[DocEntryId, string]
+
     entries*: DocEntryStore
     currentTop*: DocEntry
     top*: seq[DocEntryId]
@@ -461,6 +468,8 @@ declareStoreField(DocDb, occurencies, DocOccur)
 declareStoreField(DocDb, locations, DocLocation)
 declareStoreField(DocDb, extents, DocExtent)
 declareStoreField(DocDb, docs, DocText)
+
+declareStoredTableField(DocDb, deprecatedMsg, DocEntry, string)
 
 func add*(de: var DocEntry, id: DocEntryId) =
   de.nested.add id
@@ -529,9 +538,14 @@ func isFromMacro*(db: DocDb, node: PNode): bool =
   assert not node.isNil()
   node.id in db.expandedNodes
 
+
 proc getExpansion*(db: DocDb, node: PNode): ExpansionId =
   ## Get expansion tha tnode was generated from
   return db.expandedNodes[node.id]
+
+proc getExpansionOriginal*(db: DocDb, node: PNode): PNode =
+  db[db.getExpansion(node)].expandedFrom
+
 
 func `$`*(slice: DocLocation): string =
   &"{slice.file.int}/{slice.line}:{slice.column.a}..{slice.column.b}"
@@ -580,10 +594,7 @@ proc `$`*(db: DocDb, id: DocOccurId): string =
     r.add &" of [{e().refid.int}] "
     r.add &"({db[e().refid].kind} '{db.fullName(e().refid)}')"
 
-  r.add &" at {e().loc}"
-
-  if e().user.isSome():
-    r.add &" user: {e().user.get().int}"
+  r.add &" at {db $ e().loc} user #{e().user.int}"
 
   if e().inExpansionOf.isSome():
     r.add &" expansion: {e().inExpansionOf.get().int}"
@@ -597,12 +608,14 @@ proc `$`*(db: DocDb, id: DocEntryId): string =
 
   r.add &"[{id.int}]: {e().visibility} {e().kind} '{db.fullName(id)}'"
 
+  if e().isLocal:
+    r.add " local"
+
   if e().parent.isSome():
     r.add &" parent [{e().parent.get.int}]"
 
   if e().location.isSome():
-    let l = db[e().location.get()]
-    r.add &" in {l.file.int}({l.line}, {l.column})"
+    r.add &" in {db$e().location.get()}"
 
   if e().context.preSem:
     r.add " (presem)"
@@ -614,11 +627,12 @@ proc `$`*(db: DocDb, id: DocEntryId): string =
     r.add " available when "
     r.add conds
 
-  if e().deprecatedMsg.isSome():
+  if db.hasDeprecatedMsg(id):
     r.add " deprecated"
-    if e().deprecatedMsg.get().len > 0:
+    let msg = db.getDeprecatedMsg(id)
+    if msg.len != 0:
       r.add ": '"
-      r.add e().deprecatedMsg.get()
+      r.add msg
       r.add "'"
 
   if e().docs.len > 0:

@@ -86,11 +86,11 @@ const
   }
 
 
-func approxLoc(s: PSym): ApproximateSymbolLocation =
+func approxLoc*(s: PSym): ApproximateSymbolLocation =
   (s.name.id, s.info.fileIndex.int, s.info.line.int, s.info.col.int)
 
 
-func approxLoc(node: PNode): ApproximateSymbolLocation =
+func approxLoc*(node: PNode): ApproximateSymbolLocation =
   if node.kind == nkIdent:
     return (
       node.ident.id,
@@ -266,6 +266,12 @@ proc contains*(db: DocDb, nos: NodeOrSym): bool =
 proc approxLoc*(nos: NodeOrSym): ApproximateSymbolLocation =
   tern(nos.isSym, nos.sym.approxLoc(), nos.node.approxLoc())
 
+proc approxContains*(db: DocDb, it: PNode | PSym): bool =
+  ## TEMP HACK Check if target has been registered inthe db in any capacity
+  ## - either properly or via identifier location.
+  return it in db or it.approxLoc() in db.locationSigmap
+
+
 proc `[]`*(db: var DocDb, sym: PSym): DocEntryId =
   ## Return documentable entry ID associated with given symbol. TEMP HACK:
   ## patch DB if this is a new encounter of the documenable entry that was
@@ -314,6 +320,8 @@ proc `[]`*(db: var DocDb, ntype: PNode): DocEntryId =
         return db.locationSigmap[loc]
 
     else:
+      # No documentable entry found for the symbol at point, and there was
+      # no matching approximate locations for a node.
       assert false, "no doc entry for node $# loc was $# (in table $#)" % [
         tern(head.isSym, $treeRepr(nil, head.sym), $treeRepr(nil, head.node)),
         $loc,
@@ -345,42 +353,6 @@ func `[]`*[R1, R2](slice: DocLocation, split: HSlice[R1, R2]): DocLocation =
 func `-=`*(slice: var DocLocation, shift: int) =
   slice.column.a -= shift
   slice.column.b -= shift
-
-proc splitOn*(base, sep: DocLocation):
-  tuple[before, after: Option[DocLocation]] =
-
-  if base.column.a == sep.column.a and
-     base.column.b == sep.column.b:
-    discard
-
-  else:
-    if base.column.a < sep.column.a:
-      # [base text  ... (anything)]
-      #          < [separator text]
-      result.before = some initDocLocation(
-        base.line, base.column.a, sep.column.a - 1, base.file)
-
-    elif base.column.a == sep.column.a:
-      discard
-
-    else:
-      assert false, "TODO"
-
-    if sep.column.b < base.column.b:
-      # [... (anything)  base text]
-      # [separator text] <
-      result.after = some initDocLocation(
-        base.line, sep.column.b + 1, base.column.b, base.file)
-
-    elif sep.column.b == base.column.b:
-      discard
-
-    else:
-      assert false, "TODO"
-
-
-
-
 
 proc nodeExprSlice(node: PNode): DocLocation =
   ## Return source code slice for `node`.

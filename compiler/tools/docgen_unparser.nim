@@ -124,11 +124,11 @@ func filterPragmas*(pragmas: seq[PNode], names: seq[string]): seq[PNode] =
       case pragma[0].kind:
         of nkSym, nkIdent:
           if pragma[0].getSName() in names:
-            result.add pragma[0]
+            result.add pragma
 
         of nkCall, nkCommand, nkExprColonExpr:
           if pragma[0][0].getSName() in names:
-            result.add pragma[0]
+            result.add pragma
 
         else:
           assert false, $pragma[0].kind
