@@ -19,8 +19,14 @@ import
   ast/[
     ast,
     idents,
-    llstream
+    llstream,
+    parser
   ]
+
+proc parseString*(
+  graph: ModuleGraph, s: string; filename: string = ""; line: int = 0): PNode =
+  parseString(s, graph.cache, graph.config, filename, line)
+
 
 proc compileString*(graph: ModuleGraph, text: string): PNode =
   let moduleName: string = "/tmp/compileStringModuleName.nim"

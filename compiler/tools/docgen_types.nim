@@ -303,18 +303,21 @@ type
     context*: DocDeclarationContext
 
   DocEntry* = object
-    ## Documentation entry for the
+    ## Common data for a single documentable entry.
     sym*: PSym ## Symbol that documentable entry was generated from.
     ## Not all entries have that - `define()` targets, projects, libraries
     ## and other elements might be constructed only during pre-sem analysis
     ## and as a result might not have the symbols available.
     node*: PNode ## Node that documentable entry was generated from
 
-    context*: DocDeclarationContext
-    extent*: Option[DocExtentId]
-    location*: Option[DocLocationId] ## Source code extent for
-    ## documentable entry 'head'. Points to single identifier - entry name
-    ## in declaration.
+    context*: DocDeclarationContext ## Entry declaration context.
+    extent*: Option[DocExtentId] ## Full extent of the documentable entry
+    ## from first to the last node. Most entries have extents, so field is
+    ## densely filled and added directly to an object.
+    location*: Option[DocLocationId] ## Source code extent for documentable
+    ## entry 'head'. Points to single identifier - entry name in
+    ## declaration. Most documentable entries have location data, so this
+    ## field is contained directly in the object
     nested*: seq[DocEntryId] ## Nested documentable entries. Use to store
     ## information about fields of a type (for variant fields this might have
     ## more nested fields), arguments of a procedure, enum values and so on.
@@ -327,8 +330,11 @@ type
     ## documentation reader prespective
     deprecatedMsg*: Option[string] ## If entry was annotated with
     ## `{.deprecated.}` contains the pragma text.
-    docs*: seq[DocTextId]
-    isLocal*: bool
+    docs*: seq[DocTextId] ## Sequence of the associated documentation chunk
+    ## IDs.
+    isLocal*: bool ## Entry was declared in the local scope - nested
+    ## procedure, type definition, variable. Every symbol is mapped to some
+    ## documentable entry, and most symbols are local.
 
     case kind*: DocEntryKind
       of ndkPackage:
@@ -368,7 +374,7 @@ type
         ## instead of `DocEntryId`
 
       of ndkProcKinds:
-        procKind*: DocProcKind
+        procKind*: DocProcKind ## Procedure declaration kind
         returnType*: Option[PNode]
         wrapOf*: Option[string] ## Optional C, C++ or JS pattern used
         ## in the `.importX` pragma annotation

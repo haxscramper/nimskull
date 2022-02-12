@@ -23,6 +23,7 @@ import
     tables,
   ]
 
+import front/options as compiler_options
 
 proc infoLocation*(info: TLineInfo): DocLocation =
   DocLocation(
@@ -125,7 +126,19 @@ proc hashdata*(s: PSym): string =
 proc headSym(s: PSym): PSym = s
 proc headSym(t: PType): PSym = t.sym.headSym()
 
-proc headIdentOrSym(node: PNode): PNode =
+type
+  NodeOrSym* = object
+    case isSym*: bool
+      of true:
+        sym*: PSym
+
+      of false:
+        node*: PNode
+
+func wrapNode(node: PNode): NodeOrSym = NodeOrSym(isSym: false, node: node)
+func wrapSym(sym: PSym): NodeOrSym = NodeOrSym(isSym: true, sym: sym)
+
+proc headIdentOrSym(node: PNode): NodeOrSym =
   case node.kind:
     of nkProcDeclKinds, nkDistinctTy, nkVarTy, nkAccQuoted,
        nkBracketExpr, nkTypeDef, nkPragmaExpr, nkPar, nkEnumFieldDef,
@@ -135,11 +148,11 @@ proc headIdentOrSym(node: PNode): PNode =
     of nkCommand, nkCall, nkPrefix, nkPostfix,
        nkHiddenStdConv, nkInfix:
       if node.len == 0:
-        result = nil
+        result = wrapNode(nil)
 
       elif node.kind == nkCall:
         if node.len > 1 and node[1].kind == nkSym:
-          result = node[1]
+          result = headIdentOrSym(node[1])
 
         else:
           result = headIdentOrSym(node[0])
@@ -151,11 +164,11 @@ proc headIdentOrSym(node: PNode): PNode =
       result = headIdentOrSym(node[1])
 
     of nkSym:
-      result = node
+      result = wrapNode(node)
 
     of nkRefTy, nkPtrTy:
       if node.len == 0:
-        result = nil
+        result = wrapNode(nil)
 
       else:
         result = headIdentOrSym(node[0])
@@ -165,31 +178,44 @@ proc headIdentOrSym(node: PNode): PNode =
        nkClosedSymChoice, nkCast, nkLambda, nkCurly,
        nkReturnStmt, nkRaiseStmt, nkBracket, nkEmpty,
        nkIfExpr:
-      result = nil
+      result = wrapNode(nil)
 
     of nkIdent:
-      result = node
+      result = wrapNode(node)
 
     of nkCheckedFieldExpr:
       # First encountered during processing of `locks` file. Most likely
       # this is a `object.field` check
-      result = nil
-
-    of nkType, nkObjConstr:
       debug node
       assert false
-      result = node
+      result = wrapNode(nil)
+
+    of nkType:
+      result = wrapSym(node.typ.sym)
+
+    of nkObjConstr:
+      debug node
+      assert false
+      result = wrapNode(node)
 
     else:
       assert false, "TODO " & $node.kind
 
+func isNil*(nos: NodeOrSym): bool =
+  tern(nos.isSym, isNil(nos.sym), isNil(nos.node))
+
+func hasSym*(nos: NodeOrSym): bool =
+  nos.isSym or nos.node.kind == nkSym
+
+func getSym*(nos: NodeOrSym): PSym = tern(nos.isSym, nos.sym, nos.node.sym)
+
 proc headSym*(node: PNode): PSym =
   let n = node.headIdentOrSym()
-  if isNil(n) or n.kind == nkIdent:
+  if isNil(n) or not n.hasSym():
     result = nil
 
   else:
-    result = n.sym
+    result = n.getSym()
 
 proc addSigmap*(db: var DocDb, sym: PSym, entry: DocEntryId) =
   if not isNil(sym):
@@ -199,11 +225,11 @@ proc addSigmap*(db: var DocDb, node: PNode, entry: DocEntryId) =
   ## Add mapping between specific symbol and documentable entry. Symbol
   ## node is retrived from the ast.
   let id = headIdentOrSym(node)
-  if id.kind == nkIdent:
-    db.locationSigmap[approxLoc(id)] = entry
+  if id.hasSym():
+    db.addSigmap(id.getSym(), entry)
 
   else:
-    db.addSigmap(id.sym, entry)
+    db.locationSigmap[approxLoc(id.node)] = entry
 
 proc newDocEntry*(
     db: var DocDb, kind: DocEntryKind, name: PNode | PSym,
@@ -233,10 +259,25 @@ proc contains*(db: DocDb, ntype: PType | PNode | PSym): bool =
   let sym = ntype.headSym()
   return not sym.isNil() and sym in db.sigmap
 
+proc contains*(db: DocDb, nos: NodeOrSym): bool =
+  ## Check if symbol or ident node is stored in the documentation database
+  nos.hasSym() and tern(nos.isSym, nos.sym in db, nos.node in db)
 
-proc `[]`*(db: DocDb, sym: PSym): DocEntryId =
+proc approxLoc*(nos: NodeOrSym): ApproximateSymbolLocation =
+  tern(nos.isSym, nos.sym.approxLoc(), nos.node.approxLoc())
+
+proc `[]`*(db: var DocDb, sym: PSym): DocEntryId =
+  ## Return documentable entry ID associated with given symbol. TEMP HACK:
+  ## patch DB if this is a new encounter of the documenable entry that was
+  ## previously registered from unchecked identifier.
   assert not isNil(sym)
   if sym in db:
+    return db.sigmap[sym]
+
+  elif ((let loc = sym.approxLoc(); loc in db.locationSigmap)):
+    # Symbol approximate definition location was registered in the location
+    # sigmap - patching DB
+    db.addSigmap(sym, db.locationSigmap[loc])
     return db.sigmap[sym]
 
   else:
@@ -248,27 +289,33 @@ proc `[]`*(db: DocDb, sym: PSym): DocEntryId =
 
 
 proc `[]`*(db: var DocDb, ntype: PNode): DocEntryId =
-  ## Return documentable entry ID associated with type/node/symbol
+  ## Return documentable entry ID associated with type/node/symbol. TEMP
+  ## HACK: patch DB if this is a new encounter of the documenable entry
+  ## that was previously registered from unchecked identifier.
   let head = headIdentOrSym(ntype)
   if head in db:
-    return db.sigmap[head.sym]
+    return db.sigmap[head.getSym()]
 
   else:
     let loc = head.approxLoc()
     if loc in db.locationSigmap:
-      if head.kind == nkSym:
-        # echo "updating mapping of the node to symbol"
-        # echo db $ db.locationSigmap[loc]
-        # debug head
-        db.addSigmap(head, db.locationSigmap[loc])
-        return db[head.sym]
+      # Location was registered in the documentation sigmap, maybe need to
+      # update entries.
+      if head.hasSym():
+        # Has symbol, updating
+        let sym = head.getSym()
+        db.addSigmap(sym, db.locationSigmap[loc])
+        return db[sym]
 
       else:
+        # No symbol (I assume this code is unreachable, but right now I'm
+        # not sure if this is a hard guarantee or I just didn't hit some
+        # unlucky path)
         return db.locationSigmap[loc]
 
     else:
       assert false, "no doc entry for node $# loc was $# (in table $#)" % [
-        $treeRepr(nil, head),
+        tern(head.isSym, $treeRepr(nil, head.sym), $treeRepr(nil, head.node)),
         $loc,
         $(loc in db.locationSigmap)
       ]

@@ -706,7 +706,7 @@ proc docInSemClose(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimca
   ctx.db.toplevelExpansions.add((ctx.docModule, ctx.toplevelExpansions))
 
 
-  
+
 
 
 proc setupDocPasses(graph: ModuleGraph): DocDb =
@@ -731,7 +731,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
   implicitTReprConf.extraNodeInfo = proc(node: PNode): ColText =
     result.add "node location " & graph.config$node.info
 
-  
+
   graph.backend = back
 
   let preSemPass = makePass(
@@ -879,13 +879,27 @@ proc writeJsonLines*(conf: ConfigRef, db: DocDb) =
 proc commandDoc3*(graph: ModuleGraph, ext: string) =
   ## Execute documentation generation command for module graph
 
-#   debug graph.compileString("""
-# type
-#   Other = object
-#     field: int
+  const str = """
+type
+  Other = object
+    ## Documentation for a comment
+    field: int ## Documentation for field
 
-# echo Other().field
-# """)
+  Enum = enum
+    ## Documentation for an object
+    test = 12 ## DOcumentation for constant
+
+let A = 1 ## Single doc
+let (b, c) = (3, 3) ## Tuple doc
+let a, q, e = 12 ## Multi doc
+
+echo Other().field
+"""
+
+  # debug(graph.parseString(str), onlyStructureTReprConf + trfIndexVisisted)
+  # debug(graph.compileString(str), onlyStructureTReprConf + trfIndexVisisted)
+
+  # return
 
   let db = setupDocPasses(graph)
   compileProject(graph)
@@ -918,4 +932,3 @@ proc commandDoc3*(graph: ModuleGraph, ext: string) =
     let outTags = graph.config.projectFull.changeFileExt("etags")
     graph.config.writeEtags(db, outTags)
     echo "wrote etags to the ", outTags.string
-
