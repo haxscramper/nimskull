@@ -361,46 +361,41 @@ proc registerSymbolUse(
   let sym = node.sym
   case sym.kind:
     of skType:
-      if state.top() == rskExport:
-        db[state.moduleId].exports.incl db[node]
+      let useKind =
+        case state.top():
+          of rskTopLevel, rskPragma, rskAsgnTo,
+             rskAsgnFrom, rskTypeName, rskProcBody:
+            dokTypeDirectUse
 
+          of rskObjectFields, rskObjectBranch: dokTypeAsFieldUse
+          of rskProcArgs, rskProcHeader:       dokTypeAsArgUse
+
+          of rskInheritList: dokInheritFrom
+          of rskProcReturn:  dokTypeAsReturnUse
+          of rskBracketHead: dokTypeSpecializationUse
+          of rskBracketArgs: dokTypeAsParameterUse
+          # Registered type declaration header again, returning
+          # immediately - this occurence of a symbols should not be
+          # registered since this information (declaration location) is
+          # already contained in the documentable entry definition.
+          of rskTypeHeader:  return
+          of rskEnumHeader:  return
+          of rskAliasHeader: return
+          of rskCallHead:    dokTypeConversionUse
+          of rskImport:      dokImported
+          of rskExport:      dokExported
+          of rskInclude:     dokIncluded
+          of rskDefineCheck: dokDefineCheck
+          of rskEnumFields:  dokNone
+
+      if node notin db and state.hasAny({rskProcReturn, rskProcArgs}):
+        discard
+        # `proc createU*(T: typedesc, size = 1.Positive): ptr T` - `T` is
+        # a `skParam, module:2 item:1788` at the start and
+        # `skType, itemId: module:2 item:1791` later on. Completely different
+        # symbols, I don't think this is even possible to properly trace down.
       else:
-        let useKind =
-          case state.top():
-            of rskTopLevel, rskPragma, rskAsgnTo,
-               rskAsgnFrom, rskTypeName, rskProcBody:
-              dokTypeDirectUse
-
-            of rskObjectFields, rskObjectBranch: dokTypeAsFieldUse
-            of rskProcArgs, rskProcHeader:       dokTypeAsArgUse
-
-            of rskInheritList: dokInheritFrom
-            of rskProcReturn:  dokTypeAsReturnUse
-            of rskBracketHead: dokTypeSpecializationUse
-            of rskBracketArgs: dokTypeAsParameterUse
-            # Registered type declaration header again, returning
-            # immediately - this occurence of a symbols should not be
-            # registered since this information (declaration location) is
-            # already contained in the documentable entry definition.
-            of rskTypeHeader:  return
-            of rskEnumHeader:  return
-            of rskAliasHeader: return
-            of rskCallHead:    dokTypeConversionUse
-            of rskImport:      dokImported
-            of rskExport:      dokExported
-            of rskInclude:     dokIncluded
-            of rskDefineCheck: dokDefineCheck
-            of rskEnumFields:  dokNone
-
-        if node notin db and state.hasAny({rskProcReturn, rskProcArgs}):
-          discard
-          # `proc createU*(T: typedesc, size = 1.Positive): ptr T` - `T` is
-          # a `skParam, module:2 item:1788` at the start and
-          # `skType, itemId: module:2 item:1791` later on. Completely different
-          # symbols, I don't think this is even possible to properly trace down.
-        else:
-          discard db.occur(node, useKind, state)
-
+        discard db.occur(node, useKind, state)
 
     of skEnumField:
       let sym = sym
@@ -433,7 +428,7 @@ proc registerSymbolUse(
         discard
 
       elif state.top() == rskExport:
-        db[state.moduleId].exports.incl db[node]
+        discard db.occur(node, dokExported, state)
 
       elif sfGeneratedOp notin sym.flags:
         discard db.occur(node, dokCall, state)
@@ -511,25 +506,9 @@ proc registerSymbolUse(
       discard # ???
 
     of skModule:
-      let targetId = db.fileModules[FileIndex(sym.position)]
-      discard db.occur(node, dokImported, state, targetId)
-
-      case state.top():
-        of rskImport:
-          db[state.moduleId].imports.incl targetId
-
-        of rskExport:
-          db[state.moduleId].exports.incl targetId
-
-        of rskCallHead:
-          # `module.proc`
-          discard
-
-        else:
-          assert false, $state.top()
-
-
-
+      discard db.occur(
+        node, dokImported, state,
+        db.fileModules[FileIndex(sym.position)])
 
 proc reg(
     db: var DocDb,

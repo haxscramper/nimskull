@@ -287,6 +287,7 @@ type
     ## Active context of the documentable entry declarations
     whenConditions*: seq[PNode] ## List of nested 'when' statements that were
     ## encountered during recursive visitation.
+    whenConditionText*: string
 
   DocPotentialDependency* = object
     context*: DocDeclarationContext
@@ -319,6 +320,7 @@ type
     ## documentation reader prespective
     docs*: seq[DocTextId] ## Sequence of the associated documentation chunk
     ## IDs.
+    nodeStr*: Option[string]
 
     case kind*: DocEntryKind
       of ndkPackage:
@@ -326,14 +328,6 @@ type
         author*: string ## Package author name
         license*: string ## Package license as written in the manifest file
         requires*: seq[DocRequires] ## List of required packages
-
-      of ndkModule:
-        imports*: DocEntrySet ## Modules imported by this module
-        exports*: DocEntrySet ## Documentable entries (modules, procs, types)
-        ## exported by the module.
-        includes*: DocEntrySet ## Visited includes
-
-        maybeIncludes*, maybeImports*: seq[DocPotentialDependency]
 
       of ndkStructKinds:
         superTypes*: seq[DocEntryId]
@@ -406,6 +400,8 @@ type
     occurencies*: DocOccurStore
     sigmap*: Table[PSym, DocEntryId]
     locationSigmap*: Table[ApproximateSymbolLocation, DocEntryId] ##[HACK
+
+
 
 This field maps declarations only based on the /identifier location/ - this
 is necessary becase even after *sem* layer you can get /untyped/ fields on
@@ -541,7 +537,11 @@ proc procSignature*(
     if 0 < idx: result.add ", "
     result.add db[arg].name
     result.add ": "
-    result.add $db[arg].argType
+    if db[arg].argType.isNil():
+      result.add db[arg].nodeStr.get("")
+
+    else:
+      result.add $db[arg].argType
 
   result.add ")"
   if withReturn and db[id].returnType.isSome():

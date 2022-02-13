@@ -114,6 +114,10 @@ template sq(expr: untyped): untyped =
 proc bindParam[E: enum](ps: SqlPrepared, idx: int, opt: E) =
   bindParam(ps, idx, opt.int)
 
+proc bindParam[T](ps: SqlPrepared, idx: int, opt: Option[T]) =
+  if opt.isSome():
+    bindParam(ps, idx, opt.get())
+
 proc bindParam(
     ps: SqlPrepared, idx: int,
     it: FileIndex | uint16 | int | bool
@@ -267,7 +271,9 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
     ("kind", 3): sq(DocEntryKind),
     ("location", 4): sq(DocLocationId),
     ("extent", 5): sq(DocExtentId),
-    ("parent", 6): sq(DocEntryId)
+    ("parent", 6): sq(DocEntryId),
+    ("condition", 7): sq(string),
+    ("node", 8): sq(string)
   })):
     for id, entry in db.entries:
       with prep:
@@ -284,6 +290,36 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
       if entry.parent.isSome():
         prep.bindParam(6, entry.parent.get())
 
+      if 0 < entry.context.whenConditions.len():
+        prep.bindParam(7, entry.context.whenConditions.mapIt(
+          &"({$it})").join(" and "))
+
+      elif 0 < entry.context.whenConditionText.len():
+        prep.bindParam(7, entry.context.whenConditionText)
+
+      else:
+        prep.bindNull(7)
+
+      if entry.kind in {ndkArg}:
+        let node =
+          case entry.kind:
+            of ndkArg: entry.argType
+            else: nil
+
+        var str = ""
+        if not isNil(node):
+          str = $node
+
+        elif entry.nodeStr.isSome():
+          str = entry.nodeStr.get()
+
+        if 0 < len(str):
+          assert entry.kind == ndkArg
+          assert entry.kind.int != 0
+          prep.bindParam(8, str)
+
+        else:
+          prep.bindNull(8)
 
       conn.doExec(prep)
 
@@ -379,6 +415,9 @@ proc getColumn[T](row: InstantRow, value: var Option[T], idx: int) =
     getColumn(row, tmp, idx)
     value = some tmp
 
+  else:
+    value = none(T)
+
 proc getColumn[E: enum](col: InstantRow, value: var E, idx: int) =
   var tmp: int
   getColumn(col, tmp, idx)
@@ -428,20 +467,24 @@ proc readSqlite*(conf: ConfigRef, db: var DocDb, file: AbsoluteFile) =
   conn.readTable(
     db.deprecatedMsg, "deprecated", tuple[id: DocEntryId, msg: string])
 
-  for (id, name, kind, loc, ext, parent) in conn.typedRows(tab.entr, tuple[
+  for (id, name, kind, loc, ext, parent, condition, node) in conn.typedRows(tab.entr, tuple[
     id: DocEntryId,
     name: string,
     kind: DocEntryKind,
     location: Option[DocLocationId],
     extent: Option[DocExtentId],
     parent: Option[DocEntryId],
+    condition: string,
+    node: Option[string]
   ]):
     doAssert id == db.add(DocEntry(
       name: name,
       kind: kind,
       location: loc,
       extent: ext,
-      parent: parent
+      parent: parent,
+      nodeStr: node,
+      context: DocDeclarationContext(whenConditionText: condition)
     ))
 
     if parent.isSome():
@@ -482,7 +525,11 @@ proc readSqlite*(conf: ConfigRef, db: var DocDb, file: AbsoluteFile) =
     user: DocEntryId
   ]):
     doAssert id == db.add(DocOccur(
-      kind: kind, loc: loc, refid: refid, user: user))
+      kind: kind,
+      loc: loc,
+      refid: refid,
+      user: user
+    ))
 
   for (id, text, runnable, implicit, location) in conn.typedRows(tab.docs, tuple[
     id: DocTextId,

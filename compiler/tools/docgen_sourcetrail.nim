@@ -338,7 +338,6 @@ proc registerUses*(
       let user = db.nonlocalUser(occur)
       let userId = idMap.docToTrail[user]
       if occur.kind in {dokImported}:
-        echo db$id
         if true:
           # Record module imports as file-file relations
           if db[occur.refid].location.isSome():
@@ -369,7 +368,7 @@ proc registerUses*(
               srkImport
             ), toRange(fileId, db[occur.loc]))
 
-      else:
+      elif occur.kind notin {dokExported}:
         let refSym = writer.recordReference(
           userId,
           idMap.docToTrail[occur.refid],
