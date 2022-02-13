@@ -44,10 +44,13 @@ type
     PosProcArgs
     PosTypeBody
     PosName
+    PosBody
 
   NodeSlice* = enum
     SliceAllIdents
     SliceAllArguments
+    SliceAllBranches
+    SliceBranchExpressions
 
 func `[]`*(node: PNode, pos: NodePos): PNode =
   case pos:
@@ -57,6 +60,7 @@ func `[]`*(node: PNode, pos: NodePos): PNode =
     of PosProcBody: node[6]
     of PosTypeBody: node[2]
     of PosProcArgs: node[3]
+    of PosBody: node[^1]
     of PosProcReturn:
       assert node.kind == nkFormalParams
       node[0]
@@ -66,8 +70,11 @@ template `[]`*(node: PNode, slice: static[NodeSlice]): untyped =
   when slice == SliceAllIdents:
     node[0..^3]
 
-  elif slice == SliceAllArguments:
+  elif slice in {SliceAllArguments, SliceAllBranches}:
     node[1..^1]
+
+  elif slice == SliceBranchExpressions:
+    node[0 .. ^2]
 
   else:
     {.error: $slice.}

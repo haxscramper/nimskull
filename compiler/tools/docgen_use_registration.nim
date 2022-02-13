@@ -219,6 +219,29 @@ proc exprTypeSym(n: PNode): PSym =
     else:
       result = headSym(n)
 
+proc brokenSym(db: DocDb, sym: PSym): bool =
+  # HACK I don't know exact reason, but sometimes symbol information is
+  # completely broken and can't properly be retrieved. First time I
+  # encountered this was `std/enumutils.genEnumCaseStmt` that had
+  # expression like "let normalizerNode = quote: `normalizer`" - ast
+  # generated in quote had no proper location information and contained
+  # newly generated symbol nodes.
+  #
+  # 2 Call nid:695062
+  #     node location ???
+  #   0 Sym nid:695063 "getAst" sk:Proc
+  #       sym location ???
+  #       [NO DB ENTRY]
+  #       magic:   ExpandToAst
+  #       node location ???
+  if not db.approxContains(sym) and sym.info == unknownLineInfo:
+    return true
+
+  elif ":anonymous" == sym.name.s:
+    # QUESTION I don't exactly know what the 'anonymous' thing is, but the
+    # AST is also generated in enumutils.
+    return true
+
 
 proc registerProcBody(
     db: var DocDb, body: PNode, state: RegisterState, node: PNode) =
@@ -275,7 +298,7 @@ proc registerProcBody(
         ):
           discard
 
-        else:
+        elif not db.brokenSym(head):
           main.calls.incl db[head]
           let raises = head.effectSpec(wRaises)
           if not raises.isEmptyTree():
@@ -290,6 +313,7 @@ proc registerProcBody(
               let id = db[e]
               if not isNil(id):
                 main.effectsVia.mgetOrPut(id, DocEntrySet()).incl id
+
 
         for sub in node:
           aux(sub, db)
@@ -356,6 +380,11 @@ proc registerSymbolUse(
     state: RegisterState,
     parent: PNode
   ) =
+
+  if db.brokenSym(node.sym):
+    return
+
+
 
   assert node.kind == nkSym
   let sym = node.sym
@@ -529,8 +558,10 @@ proc reg(
 
     of nkIdent:
       if not state.switchId.isNil():
-        discard db.occur(
-          node, dokEnumFieldUse, state, idOverride = db.getSub(state.switchId, $node))
+        let sub = db.getOptSub(state.switchId, $node)
+        if sub.isSome():
+          discard db.occur(
+            node, dokEnumFieldUse, state, idOverride = sub.get())
 
       elif state.top() == rskDefineCheck:
         discard db.occur(
@@ -591,7 +622,8 @@ proc reg(
         else:
           # Identifier declaration is not registered in the DB - it is a
           # name in the `tuple[field: type]`.
-          assert node.headSym().isNil(), $treeRepr(nil, node)
+          assert node.headSym().isNil(), $treeRepr(
+            nil, node[PosLastIdent])
           state
 
       state.hasInit = not isEmptyTree(node[PosIdentInit])
@@ -661,8 +693,8 @@ proc reg(
 
       db.reg(node[4], state + rskProcHeader, node)
       db.reg(node[5], state + rskProcHeader, node)
+      let id = db[node[PosName]]
       db.reg(node[PosProcBody], state + rskProcBody, node)
-
       db.registerProcBody(node[PosProcBody], state, node)
 
     of nkBracketExpr:
@@ -671,14 +703,20 @@ proc reg(
         db.reg(subnode, state + rskBracketArgs, node)
 
     of nkRecCase:
-      var state = state
-      state.switchId = db[node[0][1]]
       db.reg(node[0], state + rskObjectBranch, node)
-      for branch in node[1 .. ^1]:
-        for expr in branch[0 .. ^2]:
-          db.reg(expr, state + rskObjectBranch, node)
 
-        db.reg(branch[^1], state + rskObjectFields, node)
+      for branch in node[SliceAllBranches]:
+        block:
+          # HACK I'm still not sure if that is caused by the architecture
+          # of the docgen registration pass, or this is a direct cause of
+          # the completely broken sem ordering, but enum identifiers are
+          # not properly semchecked in the object body.
+          var state = state
+          state.switchId = db[node[0][1]]
+          for expr in branch[SliceBranchExpressions]:
+            db.reg(expr, state + rskObjectBranch, node)
+
+        db.reg(branch[PosBody], state + rskObjectFields, node)
 
     of nkRaiseStmt:
       # TODO get type of the raised expression and if it is a concrete type
@@ -727,25 +765,26 @@ proc reg(
       db.reg(node[1], state + rskAsgnFrom, node)
 
     of nkObjConstr:
-      if node[0].kind != nkEmpty and not isNil(node[0].typ):
-        let headType = node[0].typ.skipTypes(skipPtrs)
-        if not isNil(headType.sym):
-          let head = db[headType.sym]
-          for fieldPair in node[SliceAllArguments]:
-            let key = fieldPair[0]
-            if db.approxContains(key):
-              db.reg(key, state, fieldPair)
+      # if node.inFile("times"):
+      #   debug node
 
-            else:
-              # Sometimes it just /happens, at random/, and sem layer
-              # does not register fields as symbols, so have to get them
-              # by name here.
-              discard db.occur(
-                key, dokFieldSet, state,
-                idOverride = db.getSub(head, key.getSName()))
+      if node[0].kind == nkSym:
+        let head = db[node[0]]
+        for fieldPair in node[SliceAllArguments]:
+          let key = fieldPair[0]
+          if db.approxContains(key):
+            db.reg(key, state, fieldPair)
+
+          else:
+            # Sometimes it just /happens, at random/, and sem layer
+            # does not register fields as symbols, so have to get them
+            # by name here.
+            discard db.occur(
+              key, dokFieldSet, state,
+              idOverride = db.getSub(head, key.getSName()))
 
 
-            db.reg(fieldPair[1], state, fieldPair)
+          db.reg(fieldPair[1], state, fieldPair)
 
       db.reg(node[0], state, node)
       for subnode in node[SliceAllArguments]:
@@ -772,7 +811,13 @@ proc reg(
         else: discard
 
       for subnode in node:
-        db.reg(subnode, state, node)
+        try:
+          db.reg(subnode, state, node)
+
+        except AssertionDefect:
+          debug subnode
+          writeStackTrace()
+          quit 1
 
 proc registerUses*(db: var DocDb, node: PNode, state: RegisterState) =
   reg(db, node, state, nil)

@@ -610,34 +610,35 @@ proc `$`*(db: DocDb, id: DocEntryId): string =
       r.add msg
       r.add "'"
 
-  if e().docs.len > 0:
-    r.add " doc: '"
-    for part in e().docs:
-      r.add db[part].text.replace("\n", "\\n")
-
-    r.add "'"
-
   return r
 
-proc getSub*(db: DocDb, parent: DocEntryId, subName: string): DocEntryId =
+proc getOptSub*(db: DocDb, parent: DocEntryId, subName: string):
+  Option[DocEntryId] =
+
   ## Get nested entry by name. Might return empty doc entry id if name is
   ## not found.
   var res: DocEntryId
-  proc aux(parent: DocEntryId): DocEntryId =
+  proc aux(parent: DocEntryId): Option[DocEntryId] =
     for sub in db[parent].nested:
       if db[sub].name == subName:
-        return sub
+        return some sub
 
     if db[parent].kind in ndkStructKinds:
       for super in db[parent].superTypes:
         result = aux(super)
-        if not result.isNil():
+        if result.isSome():
           return
 
   result = aux(parent)
 
-  assert not isNil(result), "no nested documentable entry '" &
+
+proc getSub*(db: DocDb, parent: DocEntryId, subName: string): DocEntryId =
+  let tmp = getOptSub(db, parent, subName)
+  assert tmp.isSome(), "no nested documentable entry '" &
     subName & "' for " & (db$parent)
+
+  return tmp.get()
+
 
 
 proc initDocLocation*(

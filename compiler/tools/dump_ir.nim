@@ -46,6 +46,7 @@ proc compileString*(graph: ModuleGraph, text: string): PNode =
       TPassProcess(
         proc(c: PPassContext, n: PNode): PNode {.nimcall.} =
           if n.info.fileIndex.uint32 == idx.uint32:
+            debug n, onlyStructureTReprConf + trfIndexVisisted
             res.add n
           result = n
       ),

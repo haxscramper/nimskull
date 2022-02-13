@@ -224,42 +224,79 @@ proc unparseIdentDefs(node: PNode): seq[DefTree] =
 
 proc unparseFields*(node: PNode): seq[DefField] =
   proc auxBranches(node: PNode): seq[DefFieldBranch]
+  proc auxBranch(branch: PNode): DefFieldBranch
   proc auxFields(node: PNode): seq[DefField] =
     case node.kind:
       of nkIdentDefs:
         for field in unparseIdentDefs(node):
           result.add DefField(head: field)
 
+      of nkSym:
+        # Because typed AST for `std/options.Option` looks like this, we
+        # get random freestanding `sym` nodes in the tree.
+        #
+        # RecList
+        # 0 RecWhen
+        #   0 ElifBranch
+        #     0 Infix
+        #       0 Sym "is" sk:Proc
+        #       1 Sym "T" sk:Type
+        #       2 Type
+        #     1 Sym "val" sk:Field
+        #   1 Else
+        #     0 RecList
+        #       0 Sym "val" sk:Field
+        #       1 Sym "has" sk:Field
+        # Sym "val" sk:Field
+        result.add DefField(head: newDef(deftField, unparseName(node), node))
+
       of nkRecWhen:
-        result.add DefField(
-          kind: deffWrapWhen,
-          branches: auxBranches(node)
+        result.add DefField(kind: deffWrapWhen, branches: auxBranches(node))
+
+      of nkRecCase:
+        var field = DefField(
+          kind: deffWrapCase,
+          head: unparseIdentDefs(node[0])[0],
         )
+
+        for branch in node[SliceAllBranches]:
+          field.branches.add auxBranch(branch)
+
+        result.add field
 
       of nkRecList:
         for sub in node:
           result.add auxFields(sub)
 
-      of nkEmpty:
+      of nkEmpty, nkNilLit:
         discard
 
       else:
         failNode node
 
+  proc auxBranch(branch: PNode): DefFieldBranch =
+    case branch.kind:
+      of nkElifBranch:
+        return DefFieldBranch(
+          branchExprs: @[branch[0]],
+          subfields: auxFields(branch[1])
+        )
+
+      of nkElse:
+        return DefFieldBranch(subfields: auxFields(branch[0]))
+
+      of nkOfBranch:
+        return DefFieldBranch(
+          branchExprs: branch[0..^2],
+          subfields: auxFields(branch[^1])
+        )
+
+      else:
+        failNode branch
+
   proc auxBranches(node: PNode): seq[DefFieldBranch] =
     for branch in node:
-      case branch.kind:
-        of nkElifBranch:
-          result.add DefFieldBranch(
-            branchExprs: @[branch[0]],
-            subfields: auxFields(branch[1])
-          )
-
-        of nkElse:
-          result.add DefFieldBranch(subfields: auxFields(branch[0]))
-
-        else:
-          failNode branch
+      result.add branch.auxBranch()
 
   return auxFields(node)
 
@@ -273,8 +310,8 @@ proc unparseGenericParams*(node: PNode): seq[tuple[
   for param in node:
     assert param.kind in {nkSym, nkIdent, nkIdentDefs}, $treeRepr(nil, param)
     if param.kind == nkIdentDefs:
-      for name in param[0..^3]:
-        result.add((name, some param[^2]))
+      for name in param[SliceAllIdents]:
+        result.add((name, some param[PosIdentType]))
 
     else:
       result.add((param, none PNode))
@@ -291,7 +328,14 @@ proc whichTypedefKind*(node: PNode): DefTreeKind =
     of nkObjectTy: result = deftObject
     of nkEnumTy: result = deftEnum
     of nkDistinctTy: result = deftDistinct
-    of nkInfix, nkProcTy, nkSym, nkIdent, nkBracketExpr, nkTupleTy:
+    of nkInfix, # `A = B | C`
+       nkProcTy, # `A = proc()`
+       nkSym, # `A = B`
+       nkIdent, # `A = B`
+       nkBracketExpr, # `A = B[C]`
+       nkTupleTy, # `A = tuple[]`
+       nkCall, # `A = typeof()`
+       nkDotExpr: # `A = module.B`
       result = deftAlias
 
     of nkEmpty:
@@ -411,6 +455,13 @@ proc unparseDefs*(node: PNode): seq[DefTree] =
       case node[1].kind:
         of nkIntLit:
           res.valOverride = node[1]
+
+        of nkTupleConstr:
+          res.valOverride = node[1][0]
+          res.strOverride = node[1][1]
+
+        of nkStrLit:
+          res.strOverride = node[1]
 
         else:
           failNode node[1]

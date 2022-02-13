@@ -228,6 +228,7 @@ proc registerIdentDefs(
 
     var doc = db.newDocEntry(visitor, nodeKind, def.nameNode())
     db.registerNestedDecls(def.typ, visitor.withUser(doc))
+    db.registerNestedDecls(def.initExpr, visitor.withUser(doc))
     db.updateCommon(doc, def, visitor)
     result.add doc
 
@@ -319,9 +320,6 @@ proc registerTypeDef(
       result = db.newDocEntry(
         visitor, db.classifyDeclKind(decl), decl.nameNode())
 
-      # if db[result].name == "TNimType":
-      #   debug decl.node
-
       if decl.objBase.isSome():
         let base = decl.objBase.get()
         db[result].superTypes.add db[base]
@@ -343,7 +341,9 @@ proc registerTypeDef(
           name = head.nameNode()
         )
 
-        db[].registerNestedDecls(head.typ, visitor.withUser(result))
+        if not head.typ.isNil():
+          db[].registerNestedDecls(head.typ, visitor.withUser(result))
+
         db[].updateCommon(result, head, visitor)
         db[][result].fieldType = head.typ
 
@@ -754,7 +754,13 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
   # Persistent data storage for all documentable entries. The data persists
   # across all open/close triggers.
   var db = DocDb()
-  implicitTReprConf.incl trfShowSymId
+  implicitTReprConf.excl {
+    trfShowSymFlags, trfShowSymId, trfShowSymName, trfShowSymOwner,
+    trfShowNodeFlags, trfShowTypeOwner,
+    trfShowNodeTypes,
+    trfShowSymTypes,
+  }
+
   implicitTReprConf.extraSymInfo = proc(sym: PSym): ColText =
     result.add "sym location " & graph.config$sym.info
     result.add "\n"
@@ -776,7 +782,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
         result.add "APPROX MAP: " + fgGreen
         result.add db$db.locationSigmap[node.approxLoc()]
 
-      else:
+      elif node.kind == nkSym:
         result.add ("\nNO APPROX LOC" + fgYellow) + styleReverse
 
   graph.backend = DocBackend(db: db)
@@ -928,23 +934,21 @@ proc commandDoc3*(graph: ModuleGraph, ext: string) =
 
   const str = """
 type
-  Other = object
-    ## Documentation for a comment
-    field: int ## Documentation for field
+  Enum = enum a, b
 
-  Enum = enum
-    ## Documentation for an object
-    test = 12 ## DOcumentation for constant
+const s = {a, b}
 
-let A = 1 ## Single doc
-let (b, c) = (3, 3) ## Tuple doc
-let a, q, e = 12 ## Multi doc
+type
+  AddfFragment* = object
+    case kind: Enum
+      of s:
+        f: int
 
-echo Other().field
 """
 
   # debug(graph.parseString(str), onlyStructureTReprConf + trfIndexVisisted)
   # debug(graph.compileString(str), onlyStructureTReprConf + trfIndexVisisted)
+  # discard graph.compileString(str)
 
   # return
 
