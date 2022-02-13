@@ -34,7 +34,11 @@ proc infoLocation*(info: TLineInfo): DocLocation =
 
 proc nodeLocation*(node: PNode): DocLocation =
   result = infoLocation(node.info)
-  result.column.b += len($node) - 1
+  if node.kind == nkAccQuoted:
+    result.column.b += len($node) + 1
+
+  else:
+    result.column.b += len($node) - 1
 
 proc nodeLocation*(node: PSym): DocLocation =
   result = infoLocation(node.info)
@@ -393,6 +397,7 @@ proc startPos*(node: PNode): TLineInfo =
 
     of nkAccQuoted:
       result = node[0].startPos()
+      result.col -= 1
 
     else:
       result = node[0].startPos()
@@ -404,8 +409,8 @@ proc finishPos*(node: PNode): TLineInfo =
       result.col += len($node).int16 - 1
 
     of nkAccQuoted:
-      result = node.info
-      result.col += len($node).int16
+      result = finishPos(node[^1])
+      result.col += 1
 
     else:
       if len(node) > 0:

@@ -33,6 +33,8 @@ type
     ndkInject = "inject" ## Variable injected into the scope by
     ## template/macro instantiation.
     ndkVar = "var"
+    ndkLet = "let"
+    ndkConst = "const"
     ndkPragma = "pragma" ## Compiler-specific directives `{.pragma.}` in
     ## nim, `#pragma` in C++ and `#[(things)]` from rust.
 
@@ -93,11 +95,8 @@ type
 
 
 const
-  ndkStructKinds* = {
-    ndkObject, ndkDefect, ndkException, ndkEffect
-  }
-
-  ndkLocalKinds* = { ndkArg, ndkInject, ndkVar, ndkParam }
+  ndkStructKinds* = { ndkObject, ndkDefect, ndkException, ndkEffect }
+  ndkLocalKinds* = { ndkArg, ndkInject, ndkVar, ndkParam, ndkLet, ndkConst }
   ndkNewtypeKinds* = { ndkObject .. ndkDistinctAlias }
   ndkProcKinds* = { ndkProc .. ndkConverter }
   ndkAliasKinds* = { ndkTypeclass, ndkAlias, ndkDistinctAlias }
@@ -132,25 +131,9 @@ type
     dokVarRead = "read"
     dokPassTo = "pass"
 
-
-    # local declaration section start
-    dokLocalArgDecl = "localArgDecl"
-    dokLocalVarDecl = "localVarDecl"
-    # local declarations section end
-
-    dokGlobalVarDecl= "globalDecl"
-    # local section end
-
     dokFieldUse = "fieldUse"
     dokFieldSet = "fieldSet"
     dokEnumFieldUse = "enumFieldUse"
-
-    dokFieldDeclare = "fieldDecl"
-    dokCallDeclare = "callDecl"
-    dokAliasDeclare = "aliasDecl"
-    dokObjectDeclare = "objectDecl"
-    dokEnumDeclare = "enumDecl"
-    dokEnumFieldDeclare = "enumfieldDecl"
 
     dokDefineCheck
 
@@ -163,8 +146,6 @@ type
 
 const
   dokVarUse* = { dokVarWrite, dokVarRead }
-  dokLocalKinds* = {dokLocalArgDecl .. dokLocalVarDecl }
-  dokLocalDeclKinds* = dokLocalKinds
 
 declareIdType(Expansion, addHash = true)
 declareIdType(DocOccur, addHash = true)
@@ -337,9 +318,6 @@ type
     ## documentation reader prespective
     docs*: seq[DocTextId] ## Sequence of the associated documentation chunk
     ## IDs.
-    isLocal*: bool ## Entry was declared in the local scope - nested
-    ## procedure, type definition, variable. Every symbol is mapped to some
-    ## documentable entry, and most symbols are local.
 
     case kind*: DocEntryKind
       of ndkPackage:
@@ -587,12 +565,10 @@ proc `$`*(db: DocDb, id: DocOccurId): string =
   var r: string
   template e(): untyped = db[id]
 
-  r.add &"[{id.int}]: {e().kind}"
-  if e().kind notin dokLocalKinds and
-     not e().refid.isNil():
+  r.add &"[{id.int}]: {e().kind} of [{e().refid.int}]"
 
-    r.add &" of [{e().refid.int}] "
-    r.add &"({db[e().refid].kind} '{db.fullName(e().refid)}')"
+  if not e().refid.isNil():
+    r.add &" ({db[e().refid].kind} '{db.fullName(e().refid)}')"
 
   r.add &" at {db $ e().loc} user #{e().user.int}"
 
@@ -607,9 +583,6 @@ proc `$`*(db: DocDb, id: DocEntryId): string =
   template e(): untyped = db[id]
 
   r.add &"[{id.int}]: {e().visibility} {e().kind} '{db.fullName(id)}'"
-
-  if e().isLocal:
-    r.add " local"
 
   if e().parent.isSome():
     r.add &" parent [{e().parent.get.int}]"

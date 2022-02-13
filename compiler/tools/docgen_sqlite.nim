@@ -267,8 +267,7 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
     ("kind", 3): sq(DocEntryKind),
     ("location", 4): sq(DocLocationId),
     ("extent", 5): sq(DocExtentId),
-    ("parent", 6): sq(DocEntryId),
-    ("local", 7): sq(bool)
+    ("parent", 6): sq(DocEntryId)
   })):
     for id, entry in db.entries:
       with prep:
@@ -285,7 +284,6 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
       if entry.parent.isSome():
         prep.bindParam(6, entry.parent.get())
 
-      prep.bindParam(7, entry.isLocal)
 
       conn.doExec(prep)
 
@@ -430,23 +428,19 @@ proc readSqlite*(conf: ConfigRef, db: var DocDb, file: AbsoluteFile) =
   conn.readTable(
     db.deprecatedMsg, "deprecated", tuple[id: DocEntryId, msg: string])
 
-  for (
-    id, name, kind, loc, ext, parent, local
-  ) in conn.typedRows(tab.entr, tuple[
+  for (id, name, kind, loc, ext, parent) in conn.typedRows(tab.entr, tuple[
     id: DocEntryId,
     name: string,
     kind: DocEntryKind,
     location: Option[DocLocationId],
     extent: Option[DocExtentId],
     parent: Option[DocEntryId],
-    local: bool
   ]):
     doAssert id == db.add(DocEntry(
       name: name,
       kind: kind,
       location: loc,
       extent: ext,
-      isLocal: local,
       parent: parent
     ))
 

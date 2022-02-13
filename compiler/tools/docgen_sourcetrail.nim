@@ -279,33 +279,22 @@ type
     fileToTrail: Table[FileIndex, cint]
     db: DocDb
 
-proc toTrail(
-    kind: DocOccurKind,
-    lastDeclare: DocOccurKind): SourcetrailReferenceKind =
-
+proc toTrail(kind: DocOccurKind): SourcetrailReferenceKind =
   case kind:
-    of dokLocalKinds:
-      assert false
-
     of dokTypeAsFieldUse, dokTypeAsReturnUse, dokTypeDirectUse,
       dokTypeAsParameterUse, dokTypeAsArgUse, dokTypeConversionUse:
       result = srkTypeUsage
 
     of dokTypeSpecializationUse:
-      if lastDeclare == dokAliasDeclare:
-        result = srkTemplateSpecialization
-
-      else:
-        # sourcetrail 'template specialization' relations is used in
-        # order to show that one type is a generic specialization of
-        # another type. In haxdoc 'generic specialization' is used that
-        # in this particular case generic type was specialized with
-        # some parameter - without describing /context/ in which
-        # declaration ocurred. Maybe later I will add support for
-        # 'context ranges' in annotation sources and differentiate
-        # between 'specialized generic used as a field' and 'inherited
-        # from specialized generic'
-        result = srkTypeUsage
+      # sourcetrail 'template specialization' relations is used in order to
+      # show that one type is a generic specialization of another type. In
+      # haxdoc 'generic specialization' is used that in this particular
+      # case generic type was specialized with some parameter - without
+      # describing /context/ in which declaration ocurred. Maybe later I
+      # will add support for 'context ranges' in annotation sources and
+      # differentiate between 'specialized generic used as a field' and
+      # 'inherited from specialized generic'
+      result = srkTypeUsage
 
     of dokInheritFrom:
       result = srkInheritance
@@ -324,86 +313,74 @@ proc toTrail(
       assert false, $kind
 
 
+proc nonlocalUser(db: DocDb, occur: DocOccur): DocEntryId =
+  # For `proc new(finalizer: proc(x: ref T))` user of `x` is another local
+  # documentable entry. Sourcetrail does not register these kind of
+  # relations so we redirect it to the first parent that can process this.
+  result = occur.user
+  while db[result].kind in ndkLocalKinds:
+    result = db[result].parent.get()
+
+      
 proc registerUses*(
     writer: var SourcetrailDBWriter, idMap: IdMap, db: DocDb) =
-  var lastDeclare: DocOccurKind
   for id, occur in db.occurencies:
-    if db[occur.user].kind in ndkLocalKinds:
-      echo db$id
-      # For `proc new(finalizer: proc(x: ref T))` user of `x` is another
-      # local documentable entry. Sourcetrail does not register these kind
-      # of relations.
-      continue
-
     let fileId = idMap.fileToTrail[db[occur.loc].file]
-    var userId = idMap.docToTrail[occur.user]
-
     if db[occur.refid].kind in ndkLocalKinds:
+      # Register location of the local variable use -
+      # var/let/const/parameter.
+      if db[occur.refid].name in ["firstArgument", "localLet"]:
+        echo db$id
+
       discard writer.recordLocalSymbolLocation(
         idMap.localToTrail[occur.refid], toRange(fileId, db[occur.loc]))
 
-    elif occur.kind in {
-      dokObjectDeclare,
-      dokCallDeclare,
-      dokAliasDeclare,
-      dokEnumDeclare,
-      dokGlobalVarDecl,
-      dokEnumFieldDeclare,
-      dokFieldDeclare
-    }:
-      if db[occur.refid].kind notin ndkLocalKinds:
-        userId = idMap.docToTrail[occur.refid]
-        lastDeclare = occur.kind
-        discard writer.recordSymbolLocation(
-          userId, toRange(fileId, db[occur.loc]))
+    else:
+      let user = db.nonlocalUser(occur)
+      let userId = idMap.docToTrail[user]
+      if occur.kind in {dokImported}:
+        when false:
+          if true:
+            # Record module imports as file-file relations
+            let target = db[occur.refid]
+            if target.location.isSome():
+              discard writer.recordReferenceLocation(
+                writer.recordReference(
+                  fileId,
+                  writer.getFile(target.getPathInPackage().string, "nim"),
+                  srkInclude
+                ),
+                toRange(fileId, part.loc))
 
-    elif occur.kind in {dokImported}:
-      when false:
-        if true:
-          # Record module imports as file-file relations
-          let target = db[occur.refid]
-          if target.location.isSome():
+          elif false:
+            # Record module relationship as 'include' between file and
+            # module inside another file.
             discard writer.recordReferenceLocation(
               writer.recordReference(
                 fileId,
-                writer.getFile(target.getPathInPackage().string, "nim"),
+                idMap.docToTrail[occur.refid],
                 srkInclude
               ),
               toRange(fileId, part.loc))
 
-        elif false:
-          # Record module relationship as 'include' between file and
-          # module inside another file.
-          discard writer.recordReferenceLocation(
-            writer.recordReference(
-              fileId,
-              idMap.docToTrail[occur.refid],
-              srkInclude
-            ),
-            toRange(fileId, part.loc))
+          elif false:
+            # Record relations betwen modules as imports
+            discard writer.recordReferenceLocation(
+              writer.recordReference(
+                idMap.docToTrail[file.moduleId.get()],
+                idMap.docToTrail[occur.refid],
+                srkImport
+              ),
+              toRange(fileId, part.loc))
 
-        elif false:
-          # Record relations betwen modules as imports
-          discard writer.recordReferenceLocation(
-            writer.recordReference(
-              idMap.docToTrail[file.moduleId.get()],
-              idMap.docToTrail[occur.refid],
-              srkImport
-            ),
-            toRange(fileId, part.loc))
+      else:
+        let refSym = writer.recordReference(
+          userId,
+          idMap.docToTrail[occur.refid],
+          occur.kind.toTrail())
 
-    elif occur.kind notin dokLocalKinds:
-      let refSym = writer.recordReference(
-        userId,
-        idMap.docToTrail[occur.refid],
-        occur.kind.toTrail(lastDeclare))
-
-      discard writer.recordReferenceLocation(
-        refSym, toRange(fileId, db[occur.loc]))
-
-    else:
-      echo db $ occur.refid
-      echo db $ id
+        discard writer.recordReferenceLocation(
+          refSym, toRange(fileId, db[occur.loc]))
 
 
 iterator parents(db: DocDb, id: DocEntryId): DocEntryId =
@@ -490,6 +467,9 @@ proc registerDb*(
 
   for id, entry in db.entries:
     if entry.kind in ndkLocalKinds:
+      if entry.name in ["firstArgument", "localLet"]:
+        echo db$id
+
       result.localToTrail[id] = writer.recordLocalSymbol($id.int)
 
     elif (entry.kind in {ndkPackage} and entry.name == ""):

@@ -239,22 +239,19 @@ proc registerNestedDecls(db: var DocDb, node: PNode, visitor: DocVisitor) =
 
   case node.kind:
     of nkEntryDeclarationKinds:
-      for decl in registerEntryDef(db, visitor, node):
-        db[decl].isLocal = true
+      discard registerEntryDef(db, visitor, node)
 
     of nkIdentDefs, nkConstDef:
       # Nested identifier definitions without var/let/const section can
       # appear only in the procedure arguments
-      for decl in registerIdentDefs(db, visitor, node, ndkArg):
-        db[decl].isLocal = true
+      discard registerIdentDefs(db, visitor, node, ndkArg)
 
     of nkSym:
       if node.sym.kind in {
         skLet, # `except XXXX as e` introduces let symbol
         skForVar # `for a in XXXX` creates new variable
       } and node notin db:
-        let exceptAs = db.newDocEntry(visitor, ndkVar, node)
-        db[exceptAs].isLocal = true
+        discard db.newDocEntry(visitor, ndkLet, node)
 
     else:
       for sub in node:
@@ -439,10 +436,16 @@ proc registerDeclSection(
   case node.kind:
     of nkConstSection, nkVarSection, nkLetSection:
       let nodeKind =
-        case node.kind:
-          of nkConstSection: ndkGlobalConst
-          of nkVarSection:  ndkGlobalVar
-          else: ndkGlobalLet
+        if db[visitor.parent.get()].kind in {ndkModule, ndkFile}:
+          case node.kind:
+            of nkConstSection: ndkGlobalConst
+            of nkVarSection:  ndkGlobalVar
+            else: ndkGlobalLet
+        else:
+          case node.kind:
+            of nkConstSection: ndkConst
+            of nkVarSection:  ndkVar
+            else: ndkLet
 
       for subnode in node:
         result.add db.registerDeclSection(

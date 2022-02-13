@@ -99,6 +99,7 @@ type
     rskProcHeader
     rskProcArgs
     rskProcReturn
+    rskProcBody
     rskBracketHead
     rskBracketArgs
     rskTypeHeader
@@ -369,7 +370,8 @@ proc registerSymbolUse(
       else:
         let useKind =
           case state.top():
-            of rskTopLevel, rskPragma, rskAsgnTo, rskAsgnFrom, rskTypeName:
+            of rskTopLevel, rskPragma, rskAsgnTo,
+               rskAsgnFrom, rskTypeName, rskProcBody:
               dokTypeDirectUse
 
             of rskObjectFields, rskObjectBranch: dokTypeAsFieldUse
@@ -379,9 +381,13 @@ proc registerSymbolUse(
             of rskProcReturn:  dokTypeAsReturnUse
             of rskBracketHead: dokTypeSpecializationUse
             of rskBracketArgs: dokTypeAsParameterUse
-            of rskTypeHeader:  dokObjectDeclare
-            of rskEnumHeader:  dokEnumDeclare
-            of rskAliasHeader: dokAliasDeclare
+            # Registered type declaration header again, returning
+            # immediately - this occurence of a symbols should not be
+            # registered since this information (declaration location) is
+            # already contained in the documentable entry definition.
+            of rskTypeHeader:  return
+            of rskEnumHeader:  return
+            of rskAliasHeader: return
             of rskCallHead:    dokTypeConversionUse
             of rskImport:      dokImported
             of rskExport:      dokExported
@@ -410,10 +416,8 @@ proc registerSymbolUse(
         # symbol and get it's nested entry by name.
         db.addSigmap(sym, sub) # Add symbol to sigmap
 
-      if state.top() == rskEnumFields:
-        discard db.occur(node, dokEnumFieldDeclare, state)
-
-      else:
+      if state.top() != rskEnumFields:
+        # In enum field declaration, ignoring symbol occurence
         discard db.occur(node, dokEnumFieldUse, state)
 
     of skField:
@@ -427,16 +431,14 @@ proc registerSymbolUse(
             idOverride = db.getSub(id, $node))
 
     of skProcDeclKinds:
-      if sym notin db:
-        discard "FIXME find why called /symbol/ is not registered in the DB"
-
-      elif state.top() == rskProcHeader:
-        discard db.occur(node, dokCallDeclare, state)
+      if state.top() == rskProcHeader:
+        # Ignoring procedure symbol in the procedure declaration header
+        discard
 
       elif state.top() == rskExport:
         db[state.moduleId].exports.incl db[node]
 
-      else:
+      elif sfGeneratedOp notin sym.flags:
         discard db.occur(node, dokCall, state)
 
     of skParam, skVar, skConst, skLet, skForVar:
@@ -454,11 +456,14 @@ proc registerSymbolUse(
         of rskAsgnFrom, # `<??> = varSymbol`
            rskBracketHead, # `varSymbol[<??>]`
            rskPragma, # `{.???: varSymbol.}`
+           rskProcBody,
            rskBracketArgs: # `??[varSymbol]`
           kind = dokVarRead
 
         of rskTopLevel:
-          kind = dokGlobalVarDecl
+          # Global variable declaration, location is registered in
+          # documentable entry registration, returning immediately.
+          return
 
         of rskProcArgs, rskProcReturn, rskProcHeader:
           if state.hasAll({rskTypeName}):
@@ -482,7 +487,8 @@ proc registerSymbolUse(
             kind = dokParametrizationWithArg
 
           else:
-            kind = dokLocalArgDecl
+            # Local argument declaration, returning.
+            return
 
         else:
           return
@@ -558,11 +564,6 @@ proc reg(
         discard db.occur(
           node, dokAnnotationUsage, state,
           idOverride = db.getOrNewNamed(ndkPragma, $node))
-
-      elif state.top() == rskObjectFields:
-        discard db.occur(
-          node, dokFieldDeclare, state,
-          idOverride = db.getSub(state.user, $node))
 
     of nkCommentStmt,
        nkEmpty,
@@ -656,7 +657,7 @@ proc reg(
       # IDEA possible analysis of passthrough code?
       discard
 
-    of nkCall, nkConv:
+    of nkCall, nkConv, nkCommand:
       if isRunnableExamples(node):
         return
 
@@ -683,7 +684,7 @@ proc reg(
 
       db.reg(node[4], state + rskProcHeader, node)
       db.reg(node[5], state + rskProcHeader, node)
-      db.reg(node[PosProcBody], state, node)
+      db.reg(node[PosProcBody], state + rskProcBody, node)
 
       db.registerProcBody(node[PosProcBody], state, node)
 
