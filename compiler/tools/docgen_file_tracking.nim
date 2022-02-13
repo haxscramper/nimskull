@@ -139,14 +139,17 @@ func wrapNode(node: PNode): NodeOrSym = NodeOrSym(isSym: false, node: node)
 func wrapSym(sym: PSym): NodeOrSym = NodeOrSym(isSym: true, sym: sym)
 
 proc headIdentOrSym(node: PNode): NodeOrSym =
+  ## Return head identifier or symbol for an expression.
   case node.kind:
     of nkProcDeclKinds, nkDistinctTy, nkVarTy, nkAccQuoted,
        nkBracketExpr, nkTypeDef, nkPragmaExpr, nkPar, nkEnumFieldDef,
        nkIdentDefs, nkRecCase, nkCallStrLit:
       result = headIdentOrSym(node[0])
 
-    of nkCommand, nkCall, nkPrefix, nkPostfix,
-       nkHiddenStdConv, nkInfix:
+    of nkPostfix:
+      result = headIdentOrSym(node[1])
+
+    of nkCommand, nkCall, nkPrefix, nkHiddenStdConv, nkInfix:
       if node.len == 0:
         result = wrapNode(nil)
 
@@ -266,11 +269,17 @@ proc contains*(db: DocDb, nos: NodeOrSym): bool =
 proc approxLoc*(nos: NodeOrSym): ApproximateSymbolLocation =
   tern(nos.isSym, nos.sym.approxLoc(), nos.node.approxLoc())
 
-proc approxContains*(db: DocDb, it: PNode | PSym): bool =
+proc approxContains*(db: DocDb, it: PSym): bool =
   ## TEMP HACK Check if target has been registered inthe db in any capacity
   ## - either properly or via identifier location.
   return it in db or it.approxLoc() in db.locationSigmap
 
+
+proc approxContains*(db: DocDb, it: PNode): bool =
+  ## TEMP HACK Check if target has been registered inthe db in any capacity
+  ## - either properly or via identifier location.
+  let it = headIdentOrSym(it)
+  return it in db or it.approxLoc() in db.locationSigmap
 
 proc `[]`*(db: var DocDb, sym: PSym): DocEntryId =
   ## Return documentable entry ID associated with given symbol. TEMP HACK:

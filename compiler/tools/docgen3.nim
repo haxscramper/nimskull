@@ -45,8 +45,13 @@ static:
     "Documentation generator requires node ids to be enabled")
 
 
+func withUser(visitor: sink DocVisitor, user: DocEntryId): DocVisitor =
+  result = visitor
+  result.docUser = user
 
-
+func withParent(visitor: sink DocVisitor, user: DocEntryId): DocVisitor =
+  result = visitor
+  result.parent = some user
 
 proc addDocText(db: var DocDb, node: PNode, module: DocEntryId): DocTextId =
   if node.kind == nkCall:
@@ -194,19 +199,78 @@ proc updateCommon(
 
 
 const nkEntryDeclarationKinds = nkProcDeclKinds + {
-  nkTypeDef, nkVarSection, nkLetSection, nkConstSection
+  nkTypeDef,
+  nkVarSection,
+  nkLetSection,
+  nkConstSection
 }
 
 proc registerEntryDef(
   db: var DocDb, visitor: DocVisitor, node: PNode): seq[DocEntryId]
 
-proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntryId =
+
+
+proc registerNestedDecls(db: var DocDb, node: PNode, visitor: DocVisitor)
+
+proc registerIdentDefs(
+    db: var DocDb,
+    visitor: DocVisitor,
+    node: PNode,
+    nodeKind: DocEntryKind
+  ): seq[DocEntryId] =
+
+  let defs = unparseDefs(node)
+  for def in defs:
+    let pragma = def.pragmas.filterPragmas(
+      @["intdefine", "strdefine", "booldefine"])
+
+    let nodeKind = tern(0 < len(pragma), ndkCompileDefine, nodeKind)
+
+    var doc = db.newDocEntry(visitor, nodeKind, def.nameNode())
+    db.registerNestedDecls(def.typ, visitor.withUser(doc))
+    db.updateCommon(doc, def, visitor)
+    result.add doc
+
+
+proc registerNestedDecls(db: var DocDb, node: PNode, visitor: DocVisitor) =
+  ## Registed recursively nested symbol declarations in the node
+  if db.isFromMacro(node) or isRunnableExamples(node):
+    return
+
+  case node.kind:
+    of nkEntryDeclarationKinds:
+      for decl in registerEntryDef(db, visitor, node):
+        db[decl].isLocal = true
+
+    of nkIdentDefs, nkConstDef:
+      # Nested identifier definitions without var/let/const section can
+      # appear only in the procedure arguments
+      for decl in registerIdentDefs(db, visitor, node, ndkArg):
+        db[decl].isLocal = true
+
+    of nkSym:
+      if node.sym.kind in {
+        skLet, # `except XXXX as e` introduces let symbol
+        skForVar # `for a in XXXX` creates new variable
+      } and node notin db:
+        let exceptAs = db.newDocEntry(visitor, ndkVar, node)
+        db[exceptAs].isLocal = true
+
+    else:
+      for sub in node:
+        db.registerNestedDecls(sub, visitor)
+
+proc registerProcDef(
+    db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntryId =
   ## Register new procedure definition in the documentation database,
   ## return constructed entry
   result = db.newDocEntry(
     visitor, db.classifyDeclKind(def), def.nameNode())
 
+  let visitor = visitor.withParent(result)
   let name = def.getSName()
+
+  # Classify procedure kind
   var pkind: DocProcKind
   case name:
     of "=destroy": pkind = dpkDestructor
@@ -229,46 +293,30 @@ proc registerProcDef(db: var DocDb, visitor: DocVisitor, def: DefTree): DocEntry
 
   db[result].procKind = pkind
 
+  # Register arguments and nested symbol declarations
   for argument in def.arguments:
     let arg = db.newDocEntry(
       visitor = visitor,
-      parent = result,
       kind = ndkArg,
       name = argument.nameNode()
     )
 
     db.updateCommon(arg, argument, visitor)
+    db.registerNestedDecls(
+      argument.typ, visitor.withUser(arg).withParent(arg))
+
     db[arg].argType = argument.typ
     db[arg].argDefault = argument.initExpr
 
-  var visitor = visitor
-  visitor.docUser = result
-  proc aux(node: PNode, db: var DocDb) =
-    if db.isFromMacro(node) or isRunnableExamples(node):
-      return
+  # Register nested documentable entry declarations
+  db.registerNestedDecls(
+    def.node[bodyPos], visitor.withUser(result))
 
-    case node.kind:
-      of nkEntryDeclarationKinds:
-        for decl in registerEntryDef(db, visitor, node):
-          db[decl].isLocal = true
+  db.registerNestedDecls(
+    def.node[genericParamsPos], visitor.withUser(result))
 
-      of nkSym:
-        if node.sym.kind in {
-          skLet, # `except XXXX as e` introduces let symbol
-          skForVar # `for a in XXXX` creates new variable
-        } and node notin db:
-          let exceptAs = db.newDocEntry(visitor, ndkVar, node)
-          db[exceptAs].isLocal = true
-
-      else:
-        # debug node
-        for sub in node:
-          aux(sub, db)
-
-  aux(def.node[bodyPos], db)
-  aux(def.node[genericParamsPos], db)
-
-proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntryId =
+proc registerTypeDef(
+    db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntryId =
   case decl.kind:
     of deftObject:
       result = db.newDocEntry(
@@ -298,6 +346,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
           name = head.nameNode()
         )
 
+        db[].registerNestedDecls(head.typ, visitor.withUser(result))
         db[].updateCommon(result, head, visitor)
         db[][result].fieldType = head.typ
 
@@ -368,6 +417,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
       )
 
       db[result].baseType = decl.baseType
+      db.registerNestedDecls(decl.baseType, visitor.withUser(result))
 
     of deftMagic:
       result = db.newDocEntry(
@@ -376,6 +426,7 @@ proc registerTypeDef(db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntr
     of deftProc, deftArg, deftLet, deftVar,
        deftConst, deftField, deftEnumField:
       assert false, $decl.kind & " is not a type definition"
+
 
 proc registerDeclSection(
     db: var DocDb,
@@ -398,19 +449,7 @@ proc registerDeclSection(
           visitor, subnode, nodeKind)
 
     of nkConstDef, nkIdentDefs, nkVarTuple:
-      let defs = unparseDefs(node)
-      for def in defs:
-        let pragma = def.pragmas.filterPragmas(
-          @["intdefine", "strdefine", "booldefine"])
-
-        let nodeKind = tern(0 < len(pragma), ndkCompileDefine, nodeKind)
-
-        var doc = db.newDocEntry(
-          visitor, nodeKind, def.nameNode())
-
-        result.add doc
-
-        db.updateCommon(doc, def, visitor)
+      result = db.registerIdentDefs(visitor, node, nodeKind)
 
     else:
       failNode node
@@ -552,9 +591,6 @@ proc preExpand(context: PContext, expr: PNode, sym: PSym) =
     # If there are no other active expansions, register current one as a
     # toplevel entry
     ctx.toplevelExpansions.add active
-    let state = RegisterState()
-    discard ctx.db.occur(
-      expr, dokExpansion, state, idOverride = ctx.db[sym])
 
   else:
     ctx.db.expansions[ctx.expansionStack[^1]].nested.add active
@@ -693,6 +729,7 @@ proc docInSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
     ctx.inModuleBody = false
     # Register immediate uses of the macro expansions
     var state = initRegisterState()
+    state.user = ctx.docModule
     state.moduleId = ctx.docModule
     registerUses(db, result, state)
 

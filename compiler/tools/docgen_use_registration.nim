@@ -323,6 +323,7 @@ proc occur*(
     state: RegisterState,
     idOverride: DocEntryId = EmptyDocEntryId
   ): DocOccurId =
+  assert not state.user.isNil()
   var occur = DocOccur(
     user: state.user,
     refid: tern(idOverride.isNil(), db[node], idOverride),
@@ -342,6 +343,7 @@ proc occur*(
     idOverride: DocEntryId = EmptyDocEntryId
   ): DocOccurId =
   ## Construct new docmentable entry occurence and return new ID
+  assert not state.user.isNil()
   var occur = DocOccur(
     kind: kind, user: state.user, localUser: state.localUser,
     loc: db.add(parent.subslice(node)),
@@ -589,6 +591,11 @@ proc reg(
               node, dokEnumFieldUse, state,
               idOverride = db[enField])
 
+      else:
+        # TODO register usage of magic integer constants in different
+        # contexts
+        discard
+
     of nkPragmaExpr:
       db.reg(node[0], state, node)
       db.reg(node[1], state + rskPragma, node)
@@ -597,19 +604,29 @@ proc reg(
       # HACK using last name in the identifier list here, but in general it
       # is not possible to cleanly attach the 'user' part here, unless I
       # run analysis on the `^2` and `^1` for each newly declared variable.
-      var state = state + db[headSym(node[^3])]
-      state.hasInit = not isEmptyTree(node[2])
+      var state =
+        if db.approxContains(node[PosLastIdent]):
+          # Identifier is documented in the DB either directly or via
+          # 'approximate' location definition.
+          state + db[node[PosLastIdent]]
 
-      for ident in node[0 .. ^3]:
+        else:
+          # Identifier declaration is not registered in the DB - it is a
+          # name in the `tuple[field: type]`.
+          assert node.headSym().isNil(), $treeRepr(nil, node)
+          state
+
+      state.hasInit = not isEmptyTree(node[PosIdentInit])
+
+      for ident in node[SliceAllIdents]:
         # Variable declaration
         db.reg(ident, state + rskAsgnTo, node)
 
-
       # Adding `result` to the state so we can register use of type /by/ a
       # variable
-      db.reg(node[^2], state + rskTypeName, node)
+      db.reg(node[PosIdentType], state + rskTypeName, node)
       # Use if expression by a variable
-      db.reg(node[^1], state + rskAsgnFrom, node)
+      db.reg(node[PosIdentInit], state + rskAsgnFrom, node)
 
     of nkImportStmt:
       for subnode in node:
@@ -655,25 +672,24 @@ proc reg(
             db.reg(subnode, state, node)
 
     of nkProcDeclKinds:
-      db.reg(node[0], state + rskProcHeader, node)
-      let state = state + db[headSym(node[0])]
+      db.reg(node[PosName], state + rskProcHeader, node)
+      let state = state + db[node[PosName]]
       # IDEA process TRM macros/pattern using different state constraints.
       db.reg(node[1], state + rskProcHeader, node)
       db.reg(node[2], state + rskProcHeader, node)
-      db.reg(node[3][0], state + rskProcReturn, node)
-      for n in node[3][1 ..^ 1]:
+      db.reg(node[PosProcArgs][PosProcReturn], state + rskProcReturn, node)
+      for n in node[PosProcArgs][SliceAllArguments]:
         db.reg(n, state + rskProcArgs, node)
 
       db.reg(node[4], state + rskProcHeader, node)
       db.reg(node[5], state + rskProcHeader, node)
+      db.reg(node[PosProcBody], state, node)
 
-      db.reg(node[6], state, node)
-
-      db.registerProcBody(node[6], state, node)
+      db.registerProcBody(node[PosProcBody], state, node)
 
     of nkBracketExpr:
       db.reg(node[0], state + rskBracketHead, node)
-      for subnode in node[1..^1]:
+      for subnode in node[SliceAllArguments]:
         db.reg(subnode, state + rskBracketArgs, node)
 
     of nkRecCase:
@@ -706,50 +722,41 @@ proc reg(
         elif node.isEnum():    rskEnumHeader
         else:                  rskTypeHeader
 
+      let state = state + db[node[PosName]]
 
-      var state = state + db[headSym(node[0])]
-
-      if state.top() != rskTopLevel and node[0] notin db:
+      if state.top() != rskTopLevel and node[PosName] notin db:
         # Inner type declaration, they are not tracked into any
         # documentable entries for now.
         discard
       else:
-        result = db.reg(node[0], state + decl, node)
+        db.reg(node[PosName], state + decl, node)
 
-
-      if state.user.isNone():
-        state.user = result
-
-      db.reg(node[1], state + decl + result, node)
+      db.reg(node[1], state + decl, node)
       if decl == rskAliasHeader:
         # Not an `object` or `enum` declaration - that leaves only typedef,
         # and typedef RHS is a type name (or several type names)
-        db.reg(node[2], state + result + rskTypeName, node)
+        db.reg(node[PosTypeBody], state + rskTypeName, node)
 
       else:
-        db.reg(node[2], state + result, node)
+        db.reg(node[PosTypeBody], state, node)
 
     of nkDistinctTy:
       if node.safeLen > 0:
         db.reg(node[0], state, node)
 
     of nkAsgn:
-      result = db.reg(node[0], state + rskAsgnTo, node)
-      if result.isSome():
-        db.reg(node[1], state + result.get() + rskAsgnFrom, node)
-
-      else:
-        db.reg(node[1], state + rskAsgnFrom, node)
+      db.reg(node[0], state + rskAsgnTo, node)
+      db.reg(node[1], state + rskAsgnFrom, node)
 
     of nkObjConstr:
       if node[0].kind != nkEmpty and not isNil(node[0].typ):
         let headType = node[0].typ.skipTypes(skipPtrs)
         if not isNil(headType.sym):
           let head = db[headType.sym]
-          for fieldPair in node[1 ..^ 1]:
+          for fieldPair in node[SliceAllArguments]:
             let key = fieldPair[0]
-            if key in db:
-              discard db.reg(key, state, fieldPair)
+            if db.approxContains(key):
+              db.reg(key, state, fieldPair)
 
             else:
               # Sometimes it just /happens, at random/, and sem layer
@@ -763,7 +770,7 @@ proc reg(
             db.reg(fieldPair[1], state, fieldPair)
 
       db.reg(node[0], state, node)
-      for subnode in node[1 ..^ 1]:
+      for subnode in node[SliceAllArguments]:
         db.reg(subnode[1], state, node)
 
     of nkRecWhen:
@@ -773,13 +780,11 @@ proc reg(
         db.reg(body, state, node)
 
     of nkPostfix:
-      return db.reg(node[1], state, node)
+      db.reg(node[1], state, node)
 
     of nkAccQuoted:
       for sub in node:
-        let tmp = db.reg(sub, state, node)
-        if tmp.isSome() and not tmp.get().isNil():
-          result = tmp
+        db.reg(sub, state, node)
 
     else:
       var state = state
@@ -789,14 +794,10 @@ proc reg(
         else: discard
 
       for subnode in node:
-        # debug node
         db.reg(subnode, state, node)
 
-
-
-
 proc registerUses*(db: var DocDb, node: PNode, state: RegisterState) =
-  discard reg(db, node, state, nil)
+  reg(db, node, state, nil)
 
 type
   CodeWriter = object

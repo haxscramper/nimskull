@@ -329,7 +329,8 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
     ("id", 1): sq(int) & sqPrimary,
     ("kind", 2): sq(DocOccurKind),
     ("refid", 3): sq(int) & sqNNil,
-    ("loc", 4): sq(DocLocationId)
+    ("loc", 4): sq(DocLocationId),
+    ("user", 5): sq(DocEntryId)
   })):
     for id, occur in db.occurencies:
       with prep:
@@ -337,6 +338,7 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
         bindParam(2, occur.kind)
         bindParam(3, occur.refid)
         bindParam(4, occur.loc)
+        bindParam(5, occur.user)
 
       conn.doExec prep
 
@@ -478,14 +480,15 @@ proc readSqlite*(conf: ConfigRef, db: var DocDb, file: AbsoluteFile) =
       finish: (lb, cb)
     ))
 
-  for (id, kind, refid, loc) in conn.typedRows(tab.occur, tuple[
+  for (id, kind, refid, loc, user) in conn.typedRows(tab.occur, tuple[
     id: DocOccurId,
     kind: DocOccurKind,
     refid: DocEntryId,
-    loc: DocLocationId
+    loc: DocLocationId,
+    user: DocEntryId
   ]):
     doAssert id == db.add(DocOccur(
-      kind: kind, loc: loc, refid: refid))
+      kind: kind, loc: loc, refid: refid, user: user))
 
   for (id, text, runnable, implicit, location) in conn.typedRows(tab.docs, tuple[
     id: DocTextId,

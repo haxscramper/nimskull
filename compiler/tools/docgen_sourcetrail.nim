@@ -328,6 +328,13 @@ proc registerUses*(
     writer: var SourcetrailDBWriter, idMap: IdMap, db: DocDb) =
   var lastDeclare: DocOccurKind
   for id, occur in db.occurencies:
+    if db[occur.user].kind in ndkLocalKinds:
+      echo db$id
+      # For `proc new(finalizer: proc(x: ref T))` user of `x` is another
+      # local documentable entry. Sourcetrail does not register these kind
+      # of relations.
+      continue
+
     let fileId = idMap.fileToTrail[db[occur.loc].file]
     var userId = idMap.docToTrail[occur.user]
 
@@ -390,8 +397,6 @@ proc registerUses*(
         userId,
         idMap.docToTrail[occur.refid],
         occur.kind.toTrail(lastDeclare))
-
-      echo &"occur of {db$occur.refid} in {db$occur.loc}"
 
       discard writer.recordReferenceLocation(
         refSym, toRange(fileId, db[occur.loc]))

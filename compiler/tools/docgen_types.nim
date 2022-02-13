@@ -210,9 +210,9 @@ type
     ## storage is implemented
     ## (https://github.com/nim-works/nimskull/discussions/113) this will be
     ## replaced by extra data table associated with each token.
-    user*: DocEntryId ## For occurence of global documentable entry -
-    ## lexically scoped parent (for function call - callee, for type -
-    ## parent composition).
+    user* {.requiresInit.}: DocEntryId ## For occurence of global
+    ## documentable entry - lexically scoped parent (for function call -
+    ## callee, for type - parent composition).
     ##
     ## For toplevel occurence of the global documentable entry (first
     ## encounter of the procedure declaration) - main module. This
