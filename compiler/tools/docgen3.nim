@@ -51,7 +51,7 @@ func withUser(visitor: sink DocVisitor, user: DocEntryId): DocVisitor =
 
 func withParent(visitor: sink DocVisitor, user: DocEntryId): DocVisitor =
   result = visitor
-  result.parent = some user
+  result.parent = user
 
 proc addDocText(db: var DocDb, node: PNode, module: DocEntryId): DocTextId =
   if node.kind == nkCall:
@@ -436,7 +436,7 @@ proc registerDeclSection(
   case node.kind:
     of nkConstSection, nkVarSection, nkLetSection:
       let nodeKind =
-        if db[visitor.parent.get()].kind in {ndkModule, ndkFile}:
+        if db[visitor.parent].kind in ndkGlobalKinds:
           case node.kind:
             of nkConstSection: ndkGlobalConst
             of nkVarSection:  ndkGlobalVar
@@ -659,7 +659,7 @@ proc docPreSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
   assert not ctx.db.isNil()
   var visitor = DocVisitor()
   visitor.docUser = ctx.docModule
-  visitor.parent = some ctx.docModule
+  visitor.parent = ctx.docModule
   visitor.declContext.preSem = true
 
   # Perform initial registration of all the entries in the code -
@@ -704,7 +704,7 @@ proc docInSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
   var visitor = DocVisitor()
 
   visitor.docUser = ctx.docModule
-  visitor.parent = some ctx.docModule
+  visitor.parent = ctx.docModule
   visitor.activeModule = ctx.docModule
 
   assert not db.isNil()

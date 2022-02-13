@@ -28,7 +28,7 @@ import std/options as std_options
 
 type
   DocVisitor* = object
-    parent*: Option[DocEntryId]
+    parent*: DocEntryId
     docUser*: DocEntryId ## Active toplevel user
     declContext*: DocDeclarationContext ## Active documentation declaration
     ## context that will be passed to new documentable entry on construction.
@@ -40,16 +40,12 @@ proc newDocEntry*(
     kind: DocEntryKind,
     name: PNode
   ): DocEntryId =
-
-  if visitor.parent.isSome():
-    db.newDocEntry(
-      kind = kind,
-      name = name,
-      parent = visitor.parent.get(),
-      context = visitor.declContext)
-
-  else:
-    db.newDocEntry(visitor.docUser, kind, name, visitor.declContext)
+  assert not visitor.parent.isNil()
+  db.newDocEntry(
+    kind = kind,
+    name = name,
+    parent = visitor.parent,
+    context = visitor.declContext)
 
 proc newDocEntry*(
     db: var DocDb,

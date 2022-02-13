@@ -97,6 +97,7 @@ type
 const
   ndkStructKinds* = { ndkObject, ndkDefect, ndkException, ndkEffect }
   ndkLocalKinds* = { ndkArg, ndkInject, ndkVar, ndkParam, ndkLet, ndkConst }
+  ndkGlobalKinds* = { ndkModule, ndkFile }
   ndkNewtypeKinds* = { ndkObject .. ndkDistinctAlias }
   ndkProcKinds* = { ndkProc .. ndkConverter }
   ndkAliasKinds* = { ndkTypeclass, ndkAlias, ndkDistinctAlias }

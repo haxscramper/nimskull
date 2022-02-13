@@ -329,9 +329,6 @@ proc registerUses*(
     if db[occur.refid].kind in ndkLocalKinds:
       # Register location of the local variable use -
       # var/let/const/parameter.
-      if db[occur.refid].name in ["firstArgument", "localLet"]:
-        echo db$id
-
       discard writer.recordLocalSymbolLocation(
         idMap.localToTrail[occur.refid], toRange(fileId, db[occur.loc]))
 
@@ -467,9 +464,6 @@ proc registerDb*(
 
   for id, entry in db.entries:
     if entry.kind in ndkLocalKinds:
-      if entry.name in ["firstArgument", "localLet"]:
-        echo db$id
-
       result.localToTrail[id] = writer.recordLocalSymbol($id.int)
 
     elif (entry.kind in {ndkPackage} and entry.name == ""):
