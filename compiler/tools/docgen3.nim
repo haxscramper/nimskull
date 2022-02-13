@@ -565,6 +565,8 @@ proc initContextCommon(ctx: DocContext | DocPreContext, module: PSym) =
     ctx.docModule = newDocEntry(db, ndkModule, module)
     db[ctx.docModule].visibility = dvkPublic
 
+  db.fileModules[module.info.fileIndex] = ctx.docModule
+
 
 
 

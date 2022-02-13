@@ -323,7 +323,9 @@ proc nonlocalUser(db: DocDb, occur: DocOccur): DocEntryId =
 
       
 proc registerUses*(
-    writer: var SourcetrailDBWriter, idMap: IdMap, db: DocDb) =
+    writer: var SourcetrailDBWriter,
+    idMap: IdMap, db: DocDb, conf: ConfigRef) =
+
   for id, occur in db.occurencies:
     let fileId = idMap.fileToTrail[db[occur.loc].file]
     if db[occur.refid].kind in ndkLocalKinds:
@@ -336,39 +338,36 @@ proc registerUses*(
       let user = db.nonlocalUser(occur)
       let userId = idMap.docToTrail[user]
       if occur.kind in {dokImported}:
-        when false:
-          if true:
-            # Record module imports as file-file relations
-            let target = db[occur.refid]
-            if target.location.isSome():
-              discard writer.recordReferenceLocation(
-                writer.recordReference(
-                  fileId,
-                  writer.getFile(target.getPathInPackage().string, "nim"),
-                  srkInclude
-                ),
-                toRange(fileId, part.loc))
-
-          elif false:
-            # Record module relationship as 'include' between file and
-            # module inside another file.
+        echo db$id
+        if true:
+          # Record module imports as file-file relations
+          if db[occur.refid].location.isSome():
+            let loc = db[occur.refid].location.get()
             discard writer.recordReferenceLocation(
               writer.recordReference(
                 fileId,
-                idMap.docToTrail[occur.refid],
+                writer.getFile(conf[db[loc].file].fullPath.string, "nim"),
                 srkInclude
-              ),
-              toRange(fileId, part.loc))
+              ), toRange(fileId, db[occur.loc]))
 
-          elif false:
-            # Record relations betwen modules as imports
-            discard writer.recordReferenceLocation(
-              writer.recordReference(
-                idMap.docToTrail[file.moduleId.get()],
-                idMap.docToTrail[occur.refid],
-                srkImport
-              ),
-              toRange(fileId, part.loc))
+        elif false:
+          # Record module relationship as 'include' between file and
+          # module inside another file.
+          discard writer.recordReferenceLocation(
+            writer.recordReference(
+              fileId,
+              idMap.docToTrail[occur.refid],
+              srkInclude
+            ), toRange(fileId, db[occur.loc]))
+
+        elif false:
+          # Record relations betwen modules as imports
+          discard writer.recordReferenceLocation(
+            writer.recordReference(
+              idMap.docToTrail[occur.user],
+              idMap.docToTrail[occur.refid],
+              srkImport
+            ), toRange(fileId, db[occur.loc]))
 
       else:
         let refSym = writer.recordReference(
@@ -487,13 +486,14 @@ proc registerFiles*(writer: var SourcetrailDBWriter, conf: ConfigRef): IdMap =
     result.fileToTrail[FileIndex(id)] =
       writer.getFile(info.fullPath.string, "nim")
 
-proc registerFullDb*(conf: ConfigRef, writer: var SourcetrailDBWriter, db: DocDb) =
+proc registerFullDb*(
+    conf: ConfigRef, writer: var SourcetrailDBWriter, db: DocDb) =
   discard writer.beginTransaction()
   let idMap = writer.registerDb(writer.registerFiles(conf), db)
   discard writer.commitTransaction()
 
   discard writer.beginTransaction()
-  writer.registerUses(idMap, db)
+  writer.registerUses(idMap, db, conf)
   discard writer.commitTransaction()
 
 const

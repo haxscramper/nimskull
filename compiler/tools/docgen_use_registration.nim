@@ -11,7 +11,8 @@ import
     types,
     renderer,
     trees,
-    wordrecg
+    wordrecg,
+    lineinfos
   ],
   utils/[
     astrepr
@@ -510,21 +511,22 @@ proc registerSymbolUse(
       discard # ???
 
     of skModule:
-      if false:
-        discard db.occur(node, dokImported, state)
-        case state.top():
-          of rskImport:
-            db[state.moduleId].imports.incl db[node]
+      let targetId = db.fileModules[FileIndex(sym.position)]
+      discard db.occur(node, dokImported, state, targetId)
 
-          of rskExport:
-            db[state.moduleId].exports.incl db[node]
+      case state.top():
+        of rskImport:
+          db[state.moduleId].imports.incl targetId
 
-          of rskCallHead:
-            # `module.proc`
-            discard
+        of rskExport:
+          db[state.moduleId].exports.incl targetId
 
-          else:
-            assert false, $state.top()
+        of rskCallHead:
+          # `module.proc`
+          discard
+
+        else:
+          assert false, $state.top()
 
 
 

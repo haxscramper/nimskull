@@ -395,6 +395,7 @@ type
     entries*: DocEntryStore
     currentTop*: DocEntry
     top*: seq[DocEntryId]
+    fileModules*: Table[FileIndex, DocEntryId]
     named*: Table[string, DocEntryId]
     expandedNodes*: Table[int, ExpansionId]
     extents*: DocExtentStore
