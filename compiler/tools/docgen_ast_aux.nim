@@ -37,8 +37,8 @@ proc getSName*(p: PSym): string = p.name.s
 type
   NodePos* = enum
     PosLastIdent
-    PosIdentType
-    PosIdentInit
+    PosType
+    PosInit
     PosProcBody
     PosProcReturn
     PosProcArgs
@@ -55,8 +55,8 @@ type
 func `[]`*(node: PNode, pos: NodePos): PNode =
   case pos:
     of PosLastIdent: node[^3]
-    of PosIdentType: node[^2]
-    of PosIdentInit: node[^1]
+    of PosType: node[^2]
+    of PosInit: node[^1]
     of PosProcBody: node[6]
     of PosTypeBody: node[2]
     of PosProcArgs: node[3]

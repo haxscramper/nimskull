@@ -9,17 +9,18 @@ import
     options
   ],
   utils/[
-    astrepr
+    astrepr,
   ],
   std/[
     sequtils,
-    strutils
+    strutils,
+    tables
   ],
   experimental/text_layouter,
   ./docgen_ast_aux
 
 when not defined(useNodeIds):
-  {.error: "Code renderer must be compiled with node ids".}
+  {.error: "Code renderer must be compiled with node ids. Compile with --define=useNodeIds".}
 
 export text_layouter 
 
@@ -182,6 +183,9 @@ proc lT(args: varargs[LytStr, toLytStr]): LytBlock =
 proc lTX(args: varargs[LytStr, toLytStr]): LytStrSpan =
   lytStrSpan(args)
 
+proc lI(node: LytBlock): LytBlock =
+  lI(2, node)
+
 proc lytInfix(
     n: PNode,
     conf: NimFormatConf,
@@ -225,7 +229,7 @@ proc lytFormalParams(
 
 
   for idx, arg in n[1..^1]:
-    var hor = lH(lT(alignLeft(lTX(arg[0], tkColon, 1), argPad)), lT(arg[1]))
+    var hor = lH(~arg[0], lT(tkColon, 1), ~arg[1])
     if not(arg[2] of nkEmpty):
       hor.add lT(1, tkEquals, 1)
       hor.add ~arg[2]
@@ -338,7 +342,7 @@ proc lytTypedef(
             failNode field
 
       flush()
-      result = lV(head, lI(2, resBody))
+      result = lV(head, lI(resBody))
 
     of nkEnumTy:
       head.add lT(tkEnum)
@@ -361,7 +365,7 @@ proc lytTypedef(
         if field.kind != nkEmpty:
           body[^1].add lytDocComment(field, prefix = " ")
 
-      result = lV(head, lI(2, initAlignedGrid(
+      result = lV(head, lI(initAlignedGrid(
         body, [lAlignLeft, lAlignCenter, lAlignLeft, lAlignLeft])))
 
     of nkTypeAliasKinds:
@@ -369,7 +373,7 @@ proc lytTypedef(
       result = head
 
     of nkProcTy:
-      result = lV(head, lI(2, ~n[2]))
+      result = lV(head, lI(~n[2]))
 
     of nkDistinctTy:
       result = lH(head, lT(tkDistinct, 1), ~n[2][0])
@@ -415,7 +419,7 @@ proc toLytBlock*(
           lytFormalReturnClose(n[3], conf, fmtStore),
           if n[4] of nkEmpty: lS() else: lH(lT(1), ~n[4]),
           if n[6] of nkEmpty: lS() else: lT(1, tkEquals, 1)),
-        lV(lytDocComment(n), lI(2, ~n[6])),
+        lV(lytDocComment(n), lI(~n[6])),
         lS())
 
 
@@ -427,33 +431,36 @@ proc toLytBlock*(
         result.add lV(
           lH(lT(kindName, 1), lS(), ~n[0], ~n[1], ~n[2], lT(tkParLe)),
           lI(4, lytFormalParams(n[3], true, conf, fmtStore)),
-          lH(lI(2, lytFormalReturnClose(n[3], conf, fmtStore)),
+          lH(lI(lytFormalReturnClose(n[3], conf, fmtStore)),
             if n[4] of nkEmpty: lS() else: lH(lT(1), ~n[4]),
             if n[6] of nkEmpty: lS() else: lT(1, tkEquals, 1)),
           lytDocComment(n),
-          lI(2, ~n[6]),
+          lI(~n[6]),
           lS())
 
     of nkStmtList:
       result = lV()
       var hadReal = false
       for sub in items(n):
-        if sub of nkEmpty and not hadReal:
+        if sub.isEmptyTree() and not hadReal:
           discard
 
         else:
           hadReal = true
           result.add ~sub
 
+      if not hadReal:
+        result.add lS()
+
     of nkForStmt:
       result = lV(lH(lT(tkFor, 1), ~n[0], # IMPLEMENT multiple identifiers
           lT(1, tkIn, 1), ~n[^2],
           lT(tkColon)),
-        lI(2, ~n[^1]))
+        lI(~n[^1]))
 
     of nkWhileStmt:
       result = lV(lH(lT(tkWhile, 1), ~n[0], lT(tkColon)),
-        lI(2, ~n[1]))
+        lI(~n[1]))
 
     of nkCaseStmt, nkRecCase:
       var regular = lV()
@@ -463,14 +470,16 @@ proc toLytBlock*(
           arms.add ~arm
 
         if n of nkRecCase:
-          regular = lV(lH(lT(tkCase, 1), ~n[0]), lI(2, arms))
+          regular = lV(lH(lT(tkCase, 1), ~n[0]), lI(arms))
 
         else:
-          regular = lV(lH(lT(tkCase, 1), ~n[0], lT(tkColon)), lI(2, arms))
+          regular = lV(lH(lT(tkCase, 1), ~n[0], lT(tkColon)), lI(arms))
 
       var grid = lV()
 
-      if nffHorizontalPackedOf in conf:
+      # FIXME spacing for `of a: lS[A, B]` does not work properly - `B` is
+      # indented less than necessary.
+      if nffHorizontalPackedOf in conf and false:
         var ofarms: seq[seq[LytBlock]]
         var elsearms: seq[LytBlock]
 
@@ -489,9 +498,8 @@ proc toLytBlock*(
             elsearms.add ~arm
 
         grid = lV(lH(lT(tkCase, 1), ~n[0], lT(tkColon)),
-          lI(2,
-            lV(initAlignedGrid(ofarms, @[lAlignLeft, lAlignLeft]),
-              lV(elsearms))))
+          lI(lV(initAlignedGrid(ofarms, @[lAlignLeft, lAlignLeft]),
+             lV(elsearms))))
 
       if {nffHorizontalPackedOf, nffVerticalPackedOf} in conf:
         result = lC(regular, grid)
@@ -504,36 +512,68 @@ proc toLytBlock*(
       # result = grid
 
     of nkElse:
-      result = lV(lT(tkElse, tkColon), lI(2, ~n[0]))
+      result = lV(lT(tkElse, tkColon), lI(~n[0]))
 
     of nkOfBranch:
-      let expr = joinItLine(n[0..^2], ~it, lT(tkComma, 1))
-      let b = ~n[^1]
-
-      case n[^1].kind:
-        of nkRecList:
-          result = lV(lH(lT(tkOf, 1), expr, lT(tkColon)), b)
-
-        else:
-          result = lV(lH(lT(tkOf, 1), expr, lT(tkColon)), lI(2, b))
+      result = lV(
+        lH(
+          lT(tkOf, 1),
+          lytCsv(n[SliceBranchExpressions], false, conf, fmtStore),
+          lT(tkColon)),
+        tern(n[PosBody] of nkRecList, ~n[PosBody], lI(~n[PosBody])))
 
     of nkIfStmt, nkWhenStmt:
+
+
       result = lV()
       for idx, branch in pairs(n):
         let isFirst = idx == 0
         if branch.kind == nkElse:
-          result.add lV(lT(tkElse, tkColon), lI(2, ~branch[0]), lS())
+          result.add lV(lT(tkElse, tkColon), lI(~branch[0]), lS())
 
         else:
           result.add lV(lH(lT(
             tern(isFirst,
-              tern(n of nkIfStmt, tkElif, tkWhen),
+              tern(n of nkIfStmt, tkIf, tkWhen),
               tkElse),
             1),
             ~branch[0],
             lT(tkColon)),
-            lI(2, ~branch[1]),
+            lI(~branch[1]),
             lS())
+
+      if n.len == 2 and
+         n.kind == nkIfStmt and
+         n[1] of nkElse:
+        let bIf = n[0][1]
+        let bElse = n[1][0]
+        # Either statement list or a literal/token node (in that case it
+        # does not have any subnodes and lenght is 0)
+        if bIf.safeLen() in [1, 0] and
+           bElse.safeLen() in [1, 0]:
+          if false:
+            result = lC(
+              result,
+              lH(
+                lT(tkIf, 1), ~n[0][0],
+                lT(tkColon, 1), ~bIf,
+                lT(1, tkElse, tkColon, 1), ~bElse
+              )
+            )
+
+    of nkTryStmt:
+      result = lV(lT(tkTry, tkColon), lI(~n[0]))
+      for branch in n[1..^1]:
+        result.add ~branch
+
+    of nkContinueStmt:
+      result = lT(tkContinue)
+
+    of nkRaiseStmt:
+      result = lH(lT(tkRaise, 1), ~n[0])
+
+    of nkExceptBranch:
+      result = lV(lH(lT(tkExcept), ~n[0]), lI(~n[1]))
 
     of nkLetSection, nkConstSection, nkVarSection:
       var decls: seq[LytBlock]
@@ -552,21 +592,23 @@ proc toLytBlock*(
         result = lH(lT(name, 1), decls[0])
 
       else:
-        result = lH(lT(name), lI(2, lV(decls)))
+        result = lH(lT(name), lI(lV(decls)))
 
 
     of nkIdentDefs, nkConstDef:
-      if n[2].kind == nkLambda:
+      if n[PosInit].kind == nkLambda:
         result = lV(tern(
-            n[1].kind == nkEmpty,
+            n[PosType].kind == nkEmpty,
             lH(lT(n[0]), lT(1, tkEquals, 1)),
-            lH(lT(n[0]), lT(1, tkColon, 1), ~n[1], lT(1, tkEquals, 1))
+            lH(lT(n[0]), lT(1, tkColon, 1), ~n[PosType], lT(1, tkEquals, 1))
           ),
-          ~n[2])
+          ~n[PosInit])
       else:
         result = lH(lT(n[0]),
-           tern(n[1] of nkEmpty, lS(), lH(lT(tkColon, 1), ~n[1])),
-           tern(n[2] of nkEmpty, lS(), lH(lT(1, tkColon, 1), ~n[2])),
+           tern(n[PosType] of nkEmpty,
+                lS(), lH(lT(tkColon, 1), ~n[PosType])),
+           tern(n[PosInit] of nkEmpty,
+                lS(), lH(lT(1, tkEquals, 1), ~n[PosInit])),
            lytDocComment(n, " "))
 
     of nkEnumFieldDef:
@@ -580,13 +622,17 @@ proc toLytBlock*(
         result = lV()
         var buffer: seq[seq[LytBlock]]
         for idx, def in n:
+          # echo "def------------"
+          # debug def
           if def[2] of nkTypeAliasKinds:
-            buffer.add @[lytTypedefHead(def, conf, fmtStore), lT(1, tkEquals, 1), ~def[2]]
+            buffer.add @[lytTypedefHead(def, conf, fmtStore),
+                         lT(1, tkEquals, 1), ~def[2]]
             buffer.add @[lS()]
 
           if not(def[2] of nkTypeAliasKinds) or idx == len(n) - 1:
             if 0 < buffer.len:
-              result.add initAlignedGrid(buffer, [lAlignLeft, lAlignLeft, lAlignLeft])
+              result.add initAlignedGrid(
+                buffer, [lAlignLeft, lAlignLeft, lAlignLeft])
               result.add lS()
 
               buffer = @[]
@@ -595,7 +641,7 @@ proc toLytBlock*(
             result.add ~def
             result.add lS()
 
-        result = lV(lT(tkType), lI(2, result))
+        result = lV(lT(tkType), lI(result))
 
     of nkTypeDef:
       result = lytTypedef(n, conf, fmtStore)
@@ -608,7 +654,7 @@ proc toLytBlock*(
       for fld in n:
         result.add ~fld
 
-      result = lI(2, result)
+      result = lI(result)
 
     of nkPragma:
       result = lH()
@@ -645,7 +691,7 @@ proc toLytBlock*(
         else:
           imports.add ~path
 
-      result = lV(lT(tkImport), lI(2, imports))
+      result = lV(lT(tkImport), lI(imports))
 
     of nkExportStmt:
       result = lH(lT(tkExport, 1))
@@ -670,14 +716,16 @@ proc toLytBlock*(
     of nkIdent, nkSym:  result = lT(n)
     of nkDotExpr:       result = lH(~n[0], lT(tkDot), ~n[1])
     of nkEmpty:         result = lS()
-    of nkIntLit:        result = lT(n)
     of nkPtrTy:         result = lH(lT(tkPtr, 1), ~n[0])
-    of nkStrLit:        result = lT(n)
+    of nkVarTy:         result = lH(lT(tkVar, 1), ~n[0])
     of nkNilLit:        result = lT(tkNil)
     of nkReturnStmt:    result = lH(lT(tkReturn, 1), ~n[0])
     of nkBreakStmt:     result = lH(lT(tkBreak, 1), ~n[0])
     of nkDiscardStmt:   result = lH(lT(tkDiscard, 1), ~n[0])
     of nkAsgn:          result = lH(~n[0], lT(1, tkEquals, 1), ~n[1])
+
+    of nkLiterals:
+      result = lT(n)
 
     of nkHiddenStdConv:
       # QUESTION - formatting hidden nodes such as std conversion, up/down
@@ -692,7 +740,7 @@ proc toLytBlock*(
           lT(tkBracketRi)),
         lV(
           lT(tkBracketLe),
-          lI(2, lytCsv(n, true, conf, fmtStore)),
+          lI(lytCsv(n, true, conf, fmtStore)),
           lT(tkBracketRi)))
 
     of nkGenericParams:
@@ -718,7 +766,7 @@ proc toLytBlock*(
       if len(n) > 6:
         result = lV(
           lT(tkCurlyLe),
-          lI(2, lytCsv(n, true, conf, fmtStore)),
+          lI(lytCsv(n, true, conf, fmtStore)),
           lT(tkCurlyRi))
 
       else:
@@ -731,7 +779,7 @@ proc toLytBlock*(
     of nkBlockStmt:
       result = lV(
         lH(lT(tkBlock), tern(n[0].isEmptyTree(), lE(), lH(lT(1), ~n[0])), lT(tkColon)),
-        lI(2, ~n[1]))
+        lI(~n[1]))
 
     of nkBracketExpr:
       result = lH(
@@ -761,7 +809,7 @@ proc toLytBlock*(
         lT(tkParRi))
 
     of nkPragmaBlock:
-      result = lV(lH(~n[0], lT(tkColon)), lI(2, ~n[1]))
+      result = lV(lH(~n[0], lT(tkColon)), lI(~n[1]))
 
     of nkTupleConstr:
       result = lH(lT(tkParLe))
@@ -776,6 +824,59 @@ proc toLytBlock*(
       failNode n
 
   assert not isNil(result), $n.kind
+  expectValid(result, $n.kind)
+
+proc formatToStr*(node: PNode): string =
+  var known: Table[int, PNode]
+  proc aux(n: PNode) =
+    known[n.id] = n
+    if 0 < safeLen(n):
+      for sub in n:
+        aux(sub)
+
+  aux(node)
+  # Convert node to the layout block tree
+  var fmtStore = newStrStore()
+  let blc = toLytBlock(node, defaultNimFormatConf, fmtStore)
+  let opts = initLytOptions()
+  # Select optimal layout of all the ones presented
+  let lyt = toLayout(blc, opts)
+  # Iterate over layout formatting events
+  for ev in nimFormatEvents(lyt, fmtStore):
+    case ev.kind:
+      # Indentation/separator spaces
+      of nimEvFormatSpaces:
+        result.add repeat(" ", ev.spaces)
+
+      # Layout newline - tokens themselves can't contain newlines
+      of nimEvFormatNewline:
+        result.add "\n"
+
+      # Format regular token: `ev.token` is a `lexer.TokType`
+      of nimEvFormatToken:
+        result.add  $ev.token
+
+      of nimEvFormatStr:
+        result.add $ev.str
+
+      # Format token node - ident, symbol, integer or any other literal
+      of nimEvFormatNode:
+        let node = known[ev.node]
+        case node.kind:
+          of nkIdent:
+            result.add node.ident.s
+
+          of nkSym:
+            result.add node.sym.name.s
+
+          of nkFloatLiterals:
+            result.add $node.floatVal
+
+          of nkIntKinds:
+            result.add $node.intVal
+
+          else:
+            result.add $node
 
 
 
@@ -792,87 +893,34 @@ when isMainModule:
     return parseString(s, cache, conf)
 
   proc reformat(s: string): string =
-
     # Input node - can come from any location, for the purposes of testing
     # using `parse()` here directly
     let node = parse(s)
+    if node.kind == nkStmtList and node.len == 1:
+      return node[0].formatToStr()
 
-    # This is a temporary workaround until it there is other way to do
-    # `NodeId` -> `Node` mapping
-    var known: Table[int, PNode]
-    proc aux(n: PNode) =
-      known[n.id] = n
-      if 0 < safeLen(n):
-        for sub in n:
-          aux(sub)
-
-    aux(node)
-
-
-    debug node
-    # Convert node to the layout block treee
-    var fmtStore = newStrStore()
-    let blc = lV(
-      lT(fmtStore.toLytStr("# Random input text")),
-      toLytBlock(node, defaultNimFormatConf, fmtStore))
-
-    proc getStr(s: LytStr): string =
-      if s.isSpaces():
-        $s.len & " spaces"
-
-      else:
-        if s.id.getMask() == TokenStr:
-          "tok '" & $s.id.popMask().int.TokType & "'"
-
-        else:
-          "node #" & $s.id.popMask().int
-
-
-    echo blc.treeRepr(getStr)
-
-    let opts = initLytOptions()
-
-    # Select optimal layout of all the ones presented
-    let lyt = toLayout(blc, opts)
-
-    echo lyt.treeRepr(getStr)
-
-    # Iterate over layout formatting events
-    for ev in nimFormatEvents(lyt, fmtStore):
-      case ev.kind:
-        # Indentation/separator spaces
-        of nimEvFormatSpaces:
-          result.add repeat(" ", ev.spaces)
-
-        # Layout newline - tokens themselves can't contain newlines
-        of nimEvFormatNewline:
-          result.add "\n"
-
-        # Format regular token: `ev.token` is a `lexer.TokType`
-        of nimEvFormatToken:
-          result.add $ev.token
-
-        of nimEvFormatStr:
-          result.add $ev.str
-
-        # Format token node - ident, symbol, integer or any other literal
-        of nimEvFormatNode:
-          let node = known[ev.node]
-          case node.kind:
-            of nkIdent:
-              result.add node.ident.s
-
-            of nkSym:
-              result.add node.sym.name.s
-
-            of nkFloatLiterals:
-              result.add $node.floatVal
-
-            of nkIntKinds:
-              result.add $node.intVal
-
-            else:
-              result.add $node
+    else:
+      return node.formatToStr()
 
   echo reformat("a = (12, 2)\nb = 2")
+  echo reformat("""
+block:
+  var i: cint = 0
+  while i < 5:
+    postInc(i)
+""")
+
+  echo reformat("""
+block:
+  while i < 5:
+    if portIoMap.count(base):
+      postInc(i)
+""")
+
+  echo reformat("""
+case v:
+    of 0xa7:
+        ccb.me = 0
+        return
+""")
   # echo reformat("for i in 0 .. 10: echo i")
