@@ -626,7 +626,7 @@ proc reg(
             nil, node[PosLastIdent])
           state
 
-      state.hasInit = not isEmptyTree(node[PosIdentInit])
+      state.hasInit = not isEmptyTree(node[PosInit])
 
       for ident in node[SliceAllIdents]:
         # Variable declaration
@@ -634,9 +634,9 @@ proc reg(
 
       # Adding `result` to the state so we can register use of type /by/ a
       # variable
-      db.reg(node[PosIdentType], state + rskTypeName, node)
+      db.reg(node[PosType], state + rskTypeName, node)
       # Use if expression by a variable
-      db.reg(node[PosIdentInit], state + rskAsgnFrom, node)
+      db.reg(node[PosInit], state + rskAsgnFrom, node)
 
     of nkImportStmt:
       for subnode in node:

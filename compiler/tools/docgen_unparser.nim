@@ -311,7 +311,7 @@ proc unparseGenericParams*(node: PNode): seq[tuple[
     assert param.kind in {nkSym, nkIdent, nkIdentDefs}, $treeRepr(nil, param)
     if param.kind == nkIdentDefs:
       for name in param[SliceAllIdents]:
-        result.add((name, some param[PosIdentType]))
+        result.add((name, some param[PosType]))
 
     else:
       result.add((param, none PNode))

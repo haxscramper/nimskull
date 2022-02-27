@@ -407,7 +407,7 @@ proc toLytBlock*(
     of nkStmtListExpr:
       result = lH(~n[0])
       for sub in n[1..^1]:
-        result.add lT(tkSemicolon, 1)
+        result.add lT(tkSemiColon, 1)
         result.add ~sub
 
     of nkProcDef, nkLambda, nkConverterDef,
