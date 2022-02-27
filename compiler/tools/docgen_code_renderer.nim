@@ -395,18 +395,30 @@ proc toLytBlock*(
 
     of nkAccQuoted:
       result = lH(lT(tkAccent))
+      var body = false
       for arg in n:
+        if body: result.add lT(1)
+        body = true
+
         result.add ~arg
 
       result.add lT(tkAccent)
 
-    of nkProcDef, nkLambda, nkConverterDef, nkFuncDef:
+    of nkStmtListExpr:
+      result = lH(~n[0])
+      for sub in n[1..^1]:
+        result.add lT(tkSemicolon, 1)
+        result.add ~sub
+
+    of nkProcDef, nkLambda, nkConverterDef,
+       nkFuncDef, nkTemplateDef:
       result = lC()
 
       let kindName =
         case n.kind:
           of nkProcDef: toLytStr(tkProc)
           of nkConverterDef: toLytStr(tkConverter)
+          of nkTemplateDef: toLytStr(tkTemplate)
           of nkLambda: EmptyLytStr
           of nkFuncDef: toLytStr(tkFunc)
           else: failNode n
@@ -573,7 +585,7 @@ proc toLytBlock*(
       result = lH(lT(tkRaise, 1), ~n[0])
 
     of nkExceptBranch:
-      result = lV(lH(lT(tkExcept), ~n[0]), lI(~n[1]))
+      result = lV(lH(lT(tkExcept, 1), ~n[0], lT(tkColon)), lI(~n[1]))
 
     of nkLetSection, nkConstSection, nkVarSection:
       var decls: seq[LytBlock]
@@ -604,7 +616,7 @@ proc toLytBlock*(
           ),
           ~n[PosInit])
       else:
-        result = lH(lT(n[0]),
+        result = lH(~n[0],
            tern(n[PosType] of nkEmpty,
                 lS(), lH(lT(tkColon, 1), ~n[PosType])),
            tern(n[PosInit] of nkEmpty,
@@ -717,6 +729,7 @@ proc toLytBlock*(
     of nkDotExpr:       result = lH(~n[0], lT(tkDot), ~n[1])
     of nkEmpty:         result = lS()
     of nkPtrTy:         result = lH(lT(tkPtr, 1), ~n[0])
+    of nkRefTy:         result = lH(lT(tkRef, 1), ~n[0])
     of nkVarTy:         result = lH(lT(tkVar, 1), ~n[0])
     of nkNilLit:        result = lT(tkNil)
     of nkReturnStmt:    result = lH(lT(tkReturn, 1), ~n[0])
@@ -759,7 +772,7 @@ proc toLytBlock*(
           ~n[0],
           lT(tkBracketRi, tkParLe),
           ~n[1],
-          lT(tkParLe))
+          lT(tkParRi))
 
 
     of nkCurly:
