@@ -162,8 +162,28 @@ proc classifyDeclKind(db: var DocDb, def: DefTree): DocEntryKind =
           if def.objBase.isNone():
             result = ndkObject
 
+          elif db.approxContains(def.objBase.get()):
+            var base = db[def.objBase.get()]
+            result = db[base].kind
+            # Traverse chain of intermediate alias declarations to get to
+            # the base object
+            while result notin ndkStructKinds:
+              # Examples of types inherited from aliases - `stream` module,
+              # and `PipeOutStream` in `streamwrapper`
+              if db[base].baseTypeId.isSome():
+                # FIXME when sem-only parsing is used `baseTypeId` should
+                # always be present, and if non-sem parsing is used
+                # `objBase` ID should always be empty ID, so this check is
+                # means that `baseTypeId =` creation in `deftAlias`
+                # regitration does not work properly.
+                base = db[base].baseTypeId.get()
+                result = db[base].kind
+
+              else:
+                result = ndkObject
+
           else:
-            result = db[db[def.objBase.get()]].kind
+            result = ndkObject
 
     of deftAlias:
       if def.node.kind in {nkInfix}:
@@ -253,6 +273,9 @@ proc registerNestedDecls(db: var DocDb, node: PNode, visitor: DocVisitor) =
       # appear only in the procedure arguments
       discard registerIdentDefs(db, visitor, node, ndkArg)
 
+    of nkTupleTy:
+      discard registerIdentDefs(db, visitor, node[0], ndkTupleField)
+
     of nkSym:
       if node.sym.kind in {
         skLet, # `except XXXX as e` introduces let symbol
@@ -323,12 +346,18 @@ proc registerTypeDef(
     db: var DocDb, visitor: DocVisitor, decl: DefTree): DocEntryId =
   case decl.kind:
     of deftObject:
-      result = db.newDocEntry(
-        visitor, db.classifyDeclKind(decl), decl.nameNode())
-
+      let declKind = db.classifyDeclKind(decl)
+      result = db.newDocEntry(visitor, declKind, decl.nameNode())
       if decl.objBase.isSome():
+        # echo "-------------------"
+        # debug decl.node
+        # echo declKind
         let base = decl.objBase.get()
-        db[result].superTypes.add db[base]
+        if db.approxContains(base):
+          # QUESTION - `else:` somehow store the unnamed base type string?
+          # This would require handling `superTypes` differently
+          db[result].superTypes.add db[base]
+
 
       let objId = result
 
@@ -420,6 +449,9 @@ proc registerTypeDef(
       )
 
       db[result].baseType = decl.baseType
+      if decl.baseType in db:
+        db[result].baseTypeId = some db[decl.baseType]
+
       db.registerNestedDecls(decl.baseType, visitor.withUser(result))
 
     of deftMagic:

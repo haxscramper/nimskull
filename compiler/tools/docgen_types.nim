@@ -60,6 +60,7 @@ type
     ndkGlobalVar = "globalvar" ## Global mutable variable
     ndkGlobalLet = "globallet" ## Global immutable variable
     ndkField = "field" ## object/struct field
+    ndkTupleField = "tupleField"
     ndkEnumField = "enumfield" ## Enum field/constant
     # end
 
@@ -411,6 +412,7 @@ type
         baseType*: PNode ## Base type /expression/ of the alias. Might contain
         ## generic type with multiple parameters, so `PNode` is used here
         ## instead of `DocEntryId`
+        baseTypeId*: Option[DocEntryId]
 
       of ndkProcKinds:
         procKind*: DocProcKind ## Procedure declaration kind

@@ -428,15 +428,16 @@ proc toTrail(kind: DocEntryKind): SourcetrailSymbolKind =
      # now I think global variable describes sematics a little better.
      sskGlobalVariable
 
-   of ndkEnum:      sskEnum
-   of ndkField:     sskField
-   of ndkEnumField: sskEnumConstant
-   of ndkBuiltin:   sskBuiltinType
-   of ndkPragma:    sskAnnotation
-   of ndkModule:    sskModule
-   of ndkPackage:   sskPackage
-   of ndkMethod:    sskMethod
-   of ndkFile:      sskModule
+   of ndkEnum:       sskEnum
+   of ndkField:      sskField
+   of ndkTupleField: sskField
+   of ndkEnumField:  sskEnumConstant
+   of ndkBuiltin:    sskBuiltinType
+   of ndkPragma:     sskAnnotation
+   of ndkModule:     sskModule
+   of ndkPackage:    sskPackage
+   of ndkMethod:     sskMethod
+   of ndkFile:       sskModule
 
    else:
      assert false, $kind

@@ -299,6 +299,9 @@ proc registerProcBody(
           discard
 
         elif not db.brokenSym(head):
+          if node[0].inFile("modulegraphs", 150 .. 160):
+            debug node
+
           main.calls.incl db[head]
           let raises = head.effectSpec(wRaises)
           if not raises.isEmptyTree():
@@ -442,14 +445,30 @@ proc registerSymbolUse(
         discard db.occur(node, dokEnumFieldUse, state)
 
     of skField:
+      if db.approxContains(sym):
+        discard db.occur(node, parent, dokFieldUse, state)
+
       if not sym.owner.isNil():
         let id = db[sym.owner]
-        if db[id].kind in {ndkObject}:
+        if db[id].kind in { ndkObject }:
           # Tuple typedefs can also have fields, but we are not tracking
           # them here since `tuple[]` /type/ is not a documentable entry.
-          discard db.occur(
-            node, parent, dokFieldUse, state,
-            idOverride = db.getSub(id, $node))
+          let sub = db.getOptSub(id, $node)
+          if sub.isSome():
+            discard db.occur(
+              node, parent, dokFieldUse, state, idOverride = sub.get())
+
+          else:
+            for field in db[id].nested:
+              # HACK this is a WIP implementation that does not account for
+              # (1) deeply nested field types, (2) identically-named fields
+              # in different locations.
+              if db[field].kind == ndkField:
+                let tupleField = db.getOptSub(field, $node)
+                if tupleField.isSome():
+                  discard db.occur(
+                    node, parent, dokFieldUse, state,
+                    idOverride = tupleField.get())
 
     of skProcDeclKinds:
       if state.top() == rskProcHeader:
@@ -772,16 +791,31 @@ proc reg(
         let head = db[node[0]]
         for fieldPair in node[SliceAllArguments]:
           let key = fieldPair[0]
-          if db.approxContains(key):
+          if key.kind in { nkOpenSymChoice, nkClosedSymChoice }:
+            # First time found in the `reports.nim` for `func kind` - I
+            # still don't understand how sem layer can have this many
+            # implementation holes and still somehow work later, but
+            # whatever. It is certainly not possible to properly register
+            # use of the open sym choice - at least right now I don't think
+            # it would make sense. Maybe sourcetrail can handle this
+            # properly, and injection would make some sense. The 'calls'
+            # relation is certainly wrong one here though - each
+            # encountered symbol can be called hypothetically - does not
+            # mean it will actually happen. Closed symbol choices are
+            # easier to deal with.
+            discard
+
+          elif db.approxContains(key):
             db.reg(key, state, fieldPair)
 
           else:
             # Sometimes it just /happens, at random/, and sem layer
             # does not register fields as symbols, so have to get them
             # by name here.
-            discard db.occur(
-              key, dokFieldSet, state,
-              idOverride = db.getSub(head, key.getSName()))
+            let sub = db.getOptSub(head, key.getSName())
+            if sub.isSome():
+              discard db.occur(
+                key, dokFieldSet, state, idOverride = sub.get())
 
 
           db.reg(fieldPair[1], state, fieldPair)
@@ -814,9 +848,11 @@ proc reg(
         try:
           db.reg(subnode, state, node)
 
-        except AssertionDefect:
+        except AssertionDefect as e:
           debug subnode
-          writeStackTrace()
+          for e in e.getStackTraceEntries():
+            echo e
+
           quit 1
 
 proc registerUses*(db: var DocDb, node: PNode, state: RegisterState) =
