@@ -1,3 +1,6 @@
+## This module provides logic for registration of the documentable entries,
+## serialization into simple formats (json, line dump, ctags)
+
 import
   sem/[
     semdata,
@@ -29,6 +32,7 @@ import
   ./docgen_unparser,
   ./docgen_ast_aux,
   ./docgen_sqlite,
+  ./docgen_text,
   ./dump_ir,
   std/[
     tables,
@@ -124,6 +128,11 @@ proc getEntryName(node: PNode): DefName =
       result = unparseName(node)
 
 proc classifyDeclKind(db: var DocDb, def: DefTree): DocEntryKind =
+  ## Get declaration kind based on the definition tree and existing
+  ## declaration context in the database. Most mappings are done directly,
+  ## based on the definition tree, but `object` can be mapped into
+  ## 'defect', 'effect', 'exception' and 'object' depending on it's parent
+  ## type's mapping.
   case def.kind:
     of deftArg: result = ndkArg
     of deftLet, deftVar, deftConst: result = ndkVar
@@ -143,9 +152,6 @@ proc classifyDeclKind(db: var DocDb, def: DefTree): DocEntryKind =
         of nkConverterDef: result = ndkConverter
         else:
           failNode def.node
-
-
-
 
     of deftObject:
       case def.getSName():
@@ -169,6 +175,8 @@ proc classifyDeclKind(db: var DocDb, def: DefTree): DocEntryKind =
 
 
 proc getDeprecated(name: DefName): Option[string] =
+  ## Get optional text of the deprecation message. If annotation had no
+  ## message, return `some("")`
   let depr = name.pragmas.filterPragmas(@["deprecated"])
   if 0 < len(depr):
     let depr = depr[0]
@@ -207,8 +215,6 @@ const nkEntryDeclarationKinds = nkProcDeclKinds + {
 
 proc registerEntryDef(
   db: var DocDb, visitor: DocVisitor, node: PNode): seq[DocEntryId]
-
-
 
 proc registerNestedDecls(db: var DocDb, node: PNode, visitor: DocVisitor)
 
@@ -459,11 +465,14 @@ proc registerDeclSection(
 
 
 proc registerGenericParams(db: var DocDb, def: DefTree, user: DocEntryId) =
+  ## Store list of nested generic parameter declarations under `user`.
   for (name, constraint) in def.genericParams:
     discard db.newDocEntry(user, ndkParam, name)
 
 proc registerEntryDef(
-  db: var DocDb, visitor: DocVisitor, node: PNode): seq[DocEntryId] =
+    db: var DocDb, visitor: DocVisitor, node: PNode): seq[DocEntryId] =
+  ## Registers single toplevel entry definition, return all found
+  ## definitions.
   case node.kind:
     of nkProcDeclKinds:
       let def = unparseDefs(node)[0]
@@ -488,6 +497,8 @@ proc registerEntryDef(
 
 
 proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
+  ## Register all toplevel definition entries, recursively visiting the
+  ## `node`
   if db.isFromMacro(node):
     return
 
@@ -582,6 +593,7 @@ func isSkip(context: PContext): bool =
   not context.config.isCompilerDebug()
 
 proc preExpand(context: PContext, expr: PNode, sym: PSym) =
+  ## Hook to be executed before macro expansion happens
   if context.isSkip(): return
 
   let ctx = DocContext(context)
@@ -603,6 +615,7 @@ proc preExpand(context: PContext, expr: PNode, sym: PSym) =
   ctx.expansionStack.add active
 
 proc postExpand(context: PContext, expr: PNode, sym: PSym) =
+  ## Hook to execute after macro expansion happens
   if context.isSkip(): return
   let ctx = DocContext(context)
   let last = ctx.expansionStack.pop()
@@ -618,6 +631,8 @@ proc postExpand(context: PContext, expr: PNode, sym: PSym) =
     aux(expr)
 
 proc preResem(context: PContext, expr: PNode, sym: PSym) =
+  ## Hook to execute before newly expanded macro result is passed into
+  ## semantic checking layer.
   if context.isSkip(): return
 
   let ctx = DocContext(context)
@@ -952,8 +967,9 @@ type
 
   # return
 
-  let db = setupDocPasses(graph)
+  var db = setupDocPasses(graph)
   compileProject(graph)
+  unparseComments(db, graph.config)
 
   echo "Compiled documentation generator project"
 

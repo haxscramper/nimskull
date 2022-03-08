@@ -12,7 +12,8 @@ import
     os,
     tables,
     times,
-    typetraits
+    typetraits,
+    json
   ],
   front/[
     options,
@@ -26,8 +27,10 @@ import
   utils/[
     pathutils
   ],
-  ./docgen_types
+  ./docgen_types,
+  ./docgen_text
 
+import std/jsonutils except distinctBase
 import std/sqlite3 except close
 import std/options as std_options
 
@@ -251,7 +254,8 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
     ("runnable", 2): sq(int),
     ("implicit", 3): sq(DocEntryId),
     ("text", 4): sq(int),
-    ("location", 5): sq(int)
+    ("location", 5): sq(int),
+    ("tree", 6): sq(string)
   })):
     for id, doc in db.docs:
       prep.bindParam(1, id)
@@ -262,6 +266,13 @@ proc writeSqlite*(conf: ConfigRef, db: DocDb, file: AbsoluteFile)  =
 
       prep.bindParam(4, doc.text)
       prep.bindParam(5, doc.location)
+      if doc.tree.isNil():
+        prep.bindNull(6)
+
+      else:
+        var tmp: string
+        tmp.toUgly(doc.tree.toJson())
+        prep.bindParam(6, tmp)
 
       conn.doExec(prep)
 
@@ -531,18 +542,23 @@ proc readSqlite*(conf: ConfigRef, db: var DocDb, file: AbsoluteFile) =
       user: user
     ))
 
-  for (id, text, runnable, implicit, location) in conn.typedRows(tab.docs, tuple[
+  for (id, text, runnable, implicit, location, tree) in conn.typedRows(tab.docs, tuple[
     id: DocTextId,
     text: string,
     runnable: bool,
     implicit: Option[DocEntryId],
-    location: DocLocationId
+    location: DocLocationId,
+    tree: Option[string]
   ]):
     var doc = DocText(
       text: text, isRunnable: runnable, location: location)
 
     if runnable:
       doc.implicit = implicit.get()
+
+    if tree.isSome():
+      doc.tree = DocTextTree()
+      doc.tree.fromJson(tree.get().parseJson())
 
     doAssert id == db.add(doc)
 

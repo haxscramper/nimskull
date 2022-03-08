@@ -216,11 +216,72 @@ declareStoreType(DocOccur)
 declareIdType(DocText, addHash = true)
 
 type
+  DocTextTreeKind* = enum
+    dttStmtList ## Zero or more toplevel statements
+    dttParagraph ## Zero or more words, joined in paragraph
+    dttText ## Single string - word
+    dttCode ## Literal/processed code block/inline. Literal code block
+    ## subnode is a single multiline `Text`, processed code block subnode
+    ## is a `StmtList[StmtList[]]` of tokens and words (for
+    ## punctuation/spacing and registered entries). Code is used for both
+    ## rendering back code elements in defintions *and* regular code blocks
+    ## supplied in `runnableExamples`.
+    dttBold ## Bold text
+    dttItalic ## Italic text
+    dttRefDocId ## Reference to the documentable entry
+    dttUrl ## Literal standalone URL
+    dttSignature ## Link to the element using it's signature
+    dttIndexLink ## `:idx`. Ideally this link should be resolved into
+    ## reference to the
+    dttLink ## Link to external or internal entry - `Link[<description>,
+    ## <target>]` where `description` can be paragraph and target can be a
+    ## `RefDocId`, `Url`, `Index` entry and any other kind of link target
+    ## subnodes. This kind provides normalized representation of all the
+    ## different link kinds that current RST parser has - `:idx:`, raw URL,
+    ## formatted URL, (ab)use of link syntax to refer to the documentable
+    ## entries in the database.
+    dttDefList
+    dttUnorderedList
+    dttAdmonition
+    dttOrderedList
+    dttListItem
+    dttEmpty
+
+
+const dttTextKinds* = { dttText, dttUrl, dttIndexLink, dttSignature }
+
+type
+  DocTextTree* = ref object
+    ## AST of the parsed documentation tree. Closely maps to the RST AST,
+    ## but allows embedding metadata directly associated with
+    ## documentation, such as resolved link IDs.
+    case kind*: DocTextTreeKind
+      of dttRefDocId:
+        docId*: DocEntryId
+
+      of dttTextKinds:
+        str*: string
+
+      of dttCode:
+        code*: seq[DocTextTree]
+        isInline*: bool
+        lang*: string
+        properties*: seq[(string, string)]
+
+      of dttAdmonition:
+        adType*: string
+
+      else:
+        discard
+
+    subnodes*: seq[DocTextTree]
+
   DocText* = object
     ## Single chunk of documentation text, can be either source code, or
     ## runnable examples.
     text*: string
     location*: DocLocationId
+    tree*: DocTextTree
     case isRunnable*: bool
       of true:
         implicit*: DocEntryId ## Current module id, implicitly
