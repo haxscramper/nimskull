@@ -3488,7 +3488,8 @@ proc reportFull*(conf: ConfigRef, r: BackendReport): string =
   assertKind r
   case BackendReportKind(r.kind):
     of rbackJsUnsupportedClosureIter,
-       rbackJsTooCaseTooLarge:
+       rbackJsTooCaseTooLarge,
+       rbackRstKinds:
       result.add(
         conf.prefix(r),
         conf.reportBody(r),

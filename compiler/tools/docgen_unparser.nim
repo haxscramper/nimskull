@@ -335,7 +335,8 @@ proc whichTypedefKind*(node: PNode): DefTreeKind =
        nkBracketExpr, # `A = B[C]`
        nkTupleTy, # `A = tuple[]`
        nkCall, # `A = typeof()`
-       nkDotExpr: # `A = module.B`
+       nkVarTy, # `A = var B`
+       nkDotExpr: # `A = module.B`,
       result = deftAlias
 
     of nkEmpty:

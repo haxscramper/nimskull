@@ -550,6 +550,10 @@ proc registerTopLevel(db: var DocDb, visitor: DocVisitor, node: PNode) =
       for (visitor, body) in visitWhen(visitor, node):
         registerTopLevel(db, visitor, body)
 
+    of nkIfStmt:
+      for branch in node:
+        registerTopLevel(db, visitor, branch[PosBody])
+
     else:
       discard
 
@@ -729,6 +733,7 @@ proc docInSemOpen(
   var back = DocBackend(graph.backend)
   var db = back.db
 
+  echo ">> ", module
   var ctx = DocContext(
     db: db,
     resolveHook:  SemResolveHook(resolve),

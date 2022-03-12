@@ -22,7 +22,8 @@ import
   ],
   std/[
     strutils,
-    tables
+    tables,
+    strformat
   ]
 
 import std/options as std_options
@@ -247,7 +248,9 @@ proc registerProcBody(
     db: var DocDb, body: PNode, state: RegisterState, node: PNode) =
   let s = node[0].headSym()
   if isNil(s) or
-     isNil(db[s]) or
+     # FIXME `approxContains` here must be removed because symbol is either
+     # `nil` or properly registered, any other behavior is invalid.
+     not db.approxContains(s) or
      s.kind notin skProcKinds:
     return
 
@@ -298,10 +301,7 @@ proc registerProcBody(
         ):
           discard
 
-        elif not db.brokenSym(head):
-          if node[0].inFile("modulegraphs", 150 .. 160):
-            debug node
-
+        elif not db.brokenSym(head) and db.approxContains(head):
           main.calls.incl db[head]
           let raises = head.effectSpec(wRaises)
           if not raises.isEmptyTree():
@@ -317,6 +317,11 @@ proc registerProcBody(
               if not isNil(id):
                 main.effectsVia.mgetOrPut(id, DocEntrySet()).incl id
 
+        else:
+          # FIXME unhandled head field symbols - can be created via `A =
+          # tuple[b: C]` types with subsequent use of the
+          discard
+
 
         for sub in node:
           aux(sub, db)
@@ -325,7 +330,13 @@ proc registerProcBody(
         if node[0].kind != nkEmpty and not isNil(node[0].typ):
           let et = node[0].typ.skipTypes(skipPtrs)
           if not isNil(et.sym):
-            main.raisesDirect.incl db[et.sym]
+            if db.approxContains(et.sym):
+              main.raisesDirect.incl db[et.sym]
+
+            else:
+              # FIXME `vm/vm.nim` logic,
+              # `type TemporaryExceptionHack = ref object of CatchableError`
+              discard
 
       of nkSym:
         case node.sym.kind:
@@ -449,26 +460,31 @@ proc registerSymbolUse(
         discard db.occur(node, parent, dokFieldUse, state)
 
       if not sym.owner.isNil():
-        let id = db[sym.owner]
-        if db[id].kind in { ndkObject }:
-          # Tuple typedefs can also have fields, but we are not tracking
-          # them here since `tuple[]` /type/ is not a documentable entry.
-          let sub = db.getOptSub(id, $node)
-          if sub.isSome():
-            discard db.occur(
-              node, parent, dokFieldUse, state, idOverride = sub.get())
+        if db.approxContains(sym.owner):
+          let id = db[sym.owner]
+          if db[id].kind in { ndkObject }:
+            # Tuple typedefs can also have fields, but we are not tracking
+            # them here since `tuple[]` /type/ is not a documentable entry.
+            let sub = db.getOptSub(id, $node)
+            if sub.isSome():
+              discard db.occur(
+                node, parent, dokFieldUse, state, idOverride = sub.get())
 
-          else:
-            for field in db[id].nested:
-              # HACK this is a WIP implementation that does not account for
-              # (1) deeply nested field types, (2) identically-named fields
-              # in different locations.
-              if db[field].kind == ndkField:
-                let tupleField = db.getOptSub(field, $node)
-                if tupleField.isSome():
-                  discard db.occur(
-                    node, parent, dokFieldUse, state,
-                    idOverride = tupleField.get())
+            else:
+              for field in db[id].nested:
+                # HACK this is a WIP implementation that does not account for
+                # (1) deeply nested field types, (2) identically-named fields
+                # in different locations.
+                if db[field].kind == ndkField:
+                  let tupleField = db.getOptSub(field, $node)
+                  if tupleField.isSome():
+                    discard db.occur(
+                      node, parent, dokFieldUse, state,
+                      idOverride = tupleField.get())
+
+        else:
+          # FIXME
+          discard
 
     of skProcDeclKinds:
       if state.top() == rskProcHeader:
@@ -639,10 +655,18 @@ proc reg(
           state + db[node[PosLastIdent]]
 
         else:
-          # Identifier declaration is not registered in the DB - it is a
-          # name in the `tuple[field: type]`.
-          assert node.headSym().isNil(), $treeRepr(
-            nil, node[PosLastIdent])
+          if node.headSym().isNil():
+            # Identifier declaration is not registered in the DB - it is a
+            # name in the `tuple[field: type]`.
+            discard
+
+          else:
+            # FIXME this must be a `failNode` for the reason outline above,
+            # but when processing certain code in `includes/osenv.nim:186`
+            # this assumption breaks, and for now I don't have energy to
+            # fix it properly.
+            debug node[PosLastIdent]
+
           state
 
       state.hasInit = not isEmptyTree(node[PosInit])
@@ -702,7 +726,11 @@ proc reg(
 
     of nkProcDeclKinds:
       db.reg(node[PosName], state + rskProcHeader, node)
-      let state = state + db[node[PosName]]
+      let state = if db.approxContains(node[PosName]):
+                    state + db[node[PosName]]
+                  else:
+                    state
+
       # IDEA process TRM macros/pattern using different state constraints.
       db.reg(node[1], state + rskProcHeader, node)
       db.reg(node[2], state + rskProcHeader, node)
@@ -712,7 +740,6 @@ proc reg(
 
       db.reg(node[4], state + rskProcHeader, node)
       db.reg(node[5], state + rskProcHeader, node)
-      let id = db[node[PosName]]
       db.reg(node[PosProcBody], state + rskProcBody, node)
       db.registerProcBody(node[PosProcBody], state, node)
 
@@ -757,7 +784,20 @@ proc reg(
         elif node.isEnum():    rskEnumHeader
         else:                  rskTypeHeader
 
-      let state = state + db[node[PosName]]
+      let state = if db.approxContains(node[PosName]):
+                    # FIXME replace with proper check into `isGensym`?
+                    # predicate, and properly track generation of genSym
+                    # elements. Latter one is a major TODO for the whole
+                    # project, but here it is most explicitly pronounced.
+                    #
+                    # In order to be able to track location of the
+                    # generated entries I would need to patch the DB after
+                    # expansion data has been written out into external
+                    # files, but this issue itself is fairly trivial.
+                    state + db[node[PosName]]
+
+                  else:
+                    state
 
       if state.top() != rskTopLevel and node[PosName] notin db:
         # Inner type declaration, they are not tracked into any
@@ -784,9 +824,6 @@ proc reg(
       db.reg(node[1], state + rskAsgnFrom, node)
 
     of nkObjConstr:
-      # if node.inFile("times"):
-      #   debug node
-
       if node[0].kind == nkSym:
         let head = db[node[0]]
         for fieldPair in node[SliceAllArguments]:
@@ -851,7 +888,9 @@ proc reg(
         except AssertionDefect as e:
           debug subnode
           for e in e.getStackTraceEntries():
-            echo e
+            echo &"{e.filename}:{e.line} {e.procname}"
+
+          echo e.msg
 
           quit 1
 

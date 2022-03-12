@@ -35,8 +35,7 @@ proc infoLocation*(info: TLineInfo): DocLocation =
 proc nodeLocation*(node: PNode): DocLocation =
   result = infoLocation(node.info)
   if node.kind == nkAccQuoted:
-    result.column.b += len($node) + 1
-
+    result.column.b += len($node) - 1
   else:
     result.column.b += len($node) - 1
 
@@ -153,7 +152,8 @@ proc headIdentOrSym(node: PNode): NodeOrSym =
     of nkPostfix:
       result = headIdentOrSym(node[1])
 
-    of nkCommand, nkCall, nkPrefix, nkHiddenStdConv, nkInfix:
+    of nkCommand, nkCall, nkPrefix,
+       nkHiddenStdConv, nkHiddenCallConv, nkInfix:
       if node.len == 0:
         result = wrapNode(nil)
 

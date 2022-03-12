@@ -20,7 +20,7 @@ type
     optGenDynLib              ## generate a dynamic library
     optGenStaticLib           ## generate a static library
     optGenGuiApp              ## generate a GUI application
-    optGenScript              ## generate a script file to compile the *.c
+    optGenScript              ## generate a script file to compile the `*.c`
                               ## files
     optGenMapping             ## generate a mapping file
     optRun                    ## run the compiled project

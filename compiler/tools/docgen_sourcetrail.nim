@@ -327,6 +327,9 @@ proc registerUses*(
     idMap: IdMap, db: DocDb, conf: ConfigRef) =
 
   for id, occur in db.occurencies:
+    if db[occur.loc].file notin idMap.fileToTrail:
+      continue
+
     let fileId = idMap.fileToTrail[db[occur.loc].file]
     if db[occur.refid].kind in ndkLocalKinds:
       # Register location of the local variable use -
@@ -505,6 +508,7 @@ const
 proc writeSourcetrail*(conf: ConfigRef, db: DocDb, outFile: AbsoluteFile) =
   var writer: SourcetrailDBWriter
   let outFile = outFile.changeFileExt(sourcetrailDbExt)
+  echo outFile
   assert existsDir parentDir(outFile.string), outFile.string
   removeFile outFile.string
   writer.open(outFile)
