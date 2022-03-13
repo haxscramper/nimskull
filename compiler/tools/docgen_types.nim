@@ -714,3 +714,23 @@ proc initDocLocation*(
     assert startCol <= endCol, &"{startCol} <= {endCol}"
     DocLocation(
       line: line, column: Slice[int](a: startCol, b: endCol), file: file)
+
+func newTree*(
+    kind: DocTextTreeKind, subnodes: varargs[DocTextTree]): DocTextTree =
+  result = DocTextTree(kind: kind)
+  if 0 < len(subnodes):
+    result.subnodes = @subnodes
+
+func newTree*(kind: DocTextTreeKind, str: string): DocTextTree =
+  result = DocTextTree(kind: kind)
+  result.str = str
+
+
+func add*(tree: var DocTextTree, other: DocTextTree) =
+  tree.subnodes.add other
+
+iterator items*(tree: DocTextTree): DocTextTree =
+  for item in tree.subnodes:
+    yield item
+
+func `[]`*(tree: DocTextTree, idx: int): DocTextTree = tree.subnodes[idx]
