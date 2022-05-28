@@ -588,6 +588,7 @@ type
     ## Documentation context object that is constructed for each open and close
     ## operation. This documentation further elaborates on analysis of the daa
 
+    config*: ConfigRef
     db*: DocDb ## Documentation database that is persistent across all
     ## processing passes, for both pre-sem and in-sem visitation.
     docModule*: DocEntryId ## Toplevel entry - module currently being
@@ -696,8 +697,8 @@ proc resolve(context: PContext, expr, call: PNode) =
 
 type
   DocBackend = ref object of RootObj
-    ## User to transfer persistent data (database) between open/close pairs
-    ## for the semantic pass.
+    ## Used to transfer persistent data (database) between open/close pairs
+    ## for the documentation generation pass pass.
     db: DocDb
 
 
@@ -730,12 +731,14 @@ proc docPreSemClose(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimc
 
 proc docInSemOpen(
     graph: ModuleGraph, module: PSym, idgen: IdGenerator): PPassContext {.nimcall.} =
+  ## Create new instance of documentation generation context
   var back = DocBackend(graph.backend)
   var db = back.db
 
   echo ">> ", module
   var ctx = DocContext(
     db: db,
+    config: graph.config,
     resolveHook:  SemResolveHook(resolve),
     expandHooks: (
       preMacro:         SemExpandHook(preExpand),
@@ -753,6 +756,10 @@ proc docInSemOpen(
 proc docInSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
   result = semPassProcess(c, n)
   var ctx = DocContext(c)
+  if ctx.config.isCompilerDebug():
+    debug n
+
+
   let conf = ctx.graph.config
   var db = ctx.db
   var visitor = DocVisitor()
