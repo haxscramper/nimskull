@@ -78,7 +78,7 @@ proc stringMismatchMessage*(
                     mapIt(s, $it)
 
   if best.distance > int(input.len.float * 0.8):
-    add "No close matches to "
+    add "no close matches to "
     add input + fgRed
     add ", possible alternative(s): "
     var first = true
@@ -168,9 +168,10 @@ func argSyms(procType: PType): seq[PNode] =
 
 proc updateRank*(mis: var RankedCallMismatch, args: ArgList) =
   let sem = mis.sem
-  let matchingLen = min(sem.target.typ.n.len, args.len)
+  let argSyms = sem.target.typ.argSyms()
+  let matchingLen = min(argSyms.len(), args.len())
   for idx in 0 ..< matchingLen:
-    var mismatch = rankMismatch(sem.target.typ.argSyms()[idx], args[idx])
+    var mismatch = rankMismatch(argSyms[idx], args[idx])
     mis.mismatches.add mismatch
     if idx <= sem.firstMismatch.pos:
       # Cost is declreased from the first mismatch position - error in the
@@ -205,17 +206,19 @@ proc typeHeadName(t: PType, withModule: bool = false): string =
     of tyGenericBody:
       result = t.lastSon.typeToString()
 
+    of tyInt: result = "int"
+
     else:
-      result = $t.kind
+      result = t.typeToString()
 
 proc format(target: PType, other: PType = nil): ColText =
+  ## Custom type format implementation, used *specifically* for error
+  ## reporting - it might fall back to general type rendering logic from
+  ## time to time, but otherwise is specifically geared towards
+  ## human-readable, colored representation.
   coloredResult()
 
   proc aux(target, other: PType) =
-    # if target.isNil:
-    #   add typeToString(target)
-    #   return
-
     if other.isNil:
       add typeToString(target)
       return
@@ -227,9 +230,9 @@ proc format(target: PType, other: PType = nil): ColText =
         add tname
 
       else:
-        add tname + fgGreen
+        add &"{tname} ({target.kind})" + fgGreen
         add " != "
-        add oname + fgRed
+        add &"{oname} ({other.kind})" + fgRed
 
     case target.kind:
       of tyGenericBody, tyBuiltInTypeClass:
@@ -271,21 +274,34 @@ proc format(arg: ArgCompare): ColText =
   result.add format(arg.wanted, arg.found)
 
 proc format(mis: RankedCallMismatch): ColText =
+  ## Format single call mismatch instance - procedure with incorrect
+  ## argument types, unknown named parameter.
   coloredResult()
 
   let sem = mis.sem
   case sem.firstMismatch.kind:
     of kUnknownNamedParam:
+      # This part deals with typos in the arguments - current
+      # implementation provides rather strange-looking elements
+      add "unknown named argument - "
       add sem.target.formatProc()
-      add "\n  "
+      add ":\n  "
       add stringMismatchMessage(
         $sem.firstMismatch.arg,
         sem.target.typ.argSyms().mapIt(it.sym.name.s))
 
     of kTypeMismatch:
+      # Argment type mismatch message
+      add "proc "
+      add sem.target.name.s
+      add "("
+      var first = true
       for argMis in mis.mismatches:
-        add "\n"
+        if not first: add ", "
+        first = false
         add argMis.format()
+
+      add ")"
 
     else:
       discard
@@ -324,14 +340,25 @@ proc reportCallMismatch(conf: ConfigRef, r: SemReport): ColText =
   let (byType, other) = r.callMismatches.groupByIdx()
 
   coloredResult()
+  add "Function call error:\n"
+  add "Type mismatch failures"
   for group in byType:
     # Convert each group's items into ranked nodes and sort candidates
     # within the byType using more advanced heuristics.
     let expr = group[0].firstMismatch.arg
+    add "\nMismatch for argument #"
+    add $group[0].firstMismatch.pos
+    add " - expression '"
+    add $group[0].firstMismatch.arg
+    add "' is of type "
+    add ", but expected any of"
     for mis in group.toRanked(args).sortedByIt(-it.rank):
+      add "\n"
       add mis.format()
 
+  add "\nOther mismatches"
   for mis in other.toRanked(args).sortedByIt(-it.rank):
+    add "\n"
     add mis.format()
 
 proc reportFull*(conf: ConfigRef, r: SemReport): ColText =

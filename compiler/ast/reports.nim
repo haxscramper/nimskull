@@ -147,7 +147,8 @@ type
 
   SemDiagnostics* = object
     diagnosticsTarget*: PSym ## The concept sym that didn't match
-    reports*: seq[SemReport] ## The reports that explain why the concept didn't match
+    reports*: seq[SemReport] ## The reports that explain why the concept
+                             ## didn't match
 
   MismatchInfo* = object
     kind*: MismatchKind ## reason for mismatch
@@ -168,7 +169,8 @@ type
     firstMismatch*: MismatchInfo ## mismatch info for better error messages
 
     diag*: SemDiagnostics
-    diagnosticsEnabled*: bool ## Set by sfExplain. efExplain or notFoundError ignore this
+    diagnosticsEnabled*: bool ## Set by sfExplain. efExplain or
+                              ## notFoundError ignore this
 
   SemSpellCandidate* = object
     dist*: int
