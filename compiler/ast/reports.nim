@@ -151,8 +151,10 @@ type
 
   MismatchInfo* = object
     kind*: MismatchKind ## reason for mismatch
-    pos*: int           ## position of provided argument that mismatches. This doesn't always correspond to
-                        ## the *expression* subnode index (e.g. `.=`) nor the *target parameter* index (varargs)
+    pos*: int           ## position of provided argument that mismatches.
+                        ## This doesn't always correspond to the
+                        ## *expression* subnode index (e.g. `.=`) nor the
+                        ## *target parameter* index (varargs)
     arg*: PNode         ## the node of the mismatching provided argument
     formal*: PSym       ## parameter that mismatches against provided argument
                         ## its position can differ from `arg` because of varargs
