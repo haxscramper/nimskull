@@ -3164,5 +3164,3 @@ proc semStmt(c: PContext, n: PNode; flags: TExprFlags): PNode =
   else:
     result = semExprNoType(c, n)
 
-  if c.config.isCompilerDebug():
-    debug(result)

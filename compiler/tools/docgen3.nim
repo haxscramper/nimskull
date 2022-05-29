@@ -349,9 +349,6 @@ proc registerTypeDef(
       let declKind = db.classifyDeclKind(decl)
       result = db.newDocEntry(visitor, declKind, decl.nameNode())
       if decl.objBase.isSome():
-        # echo "-------------------"
-        # debug decl.node
-        # echo declKind
         let base = decl.objBase.get()
         if db.approxContains(base):
           # QUESTION - `else:` somehow store the unnamed base type string?
@@ -756,10 +753,6 @@ proc docInSemOpen(
 proc docInSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
   result = semPassProcess(c, n)
   var ctx = DocContext(c)
-  if ctx.config.isCompilerDebug():
-    debug n
-
-
   let conf = ctx.graph.config
   var db = ctx.db
   var visitor = DocVisitor()
