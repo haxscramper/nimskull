@@ -380,21 +380,35 @@ proc reportBody*(conf: ConfigRef, r: SemReport): ColText =
       result.add old.reportBody(conf, r)
 
 proc getContext(conf: ConfigRef, ctx: seq[ReportContext]): ColText =
-  ## Get active instantiation context from the configuration
+  ## Format report context message
   coloredResult()
   for ctx in items(ctx):
+    # Instantiation reports have their own context message information
     add(old.toStr(conf, ctx.location))
     case ctx.kind:
       of sckInstantiationOf:
-        add " template/generic instantiation of `"
+        debug ctx.entry
+        add " instantiation of "
         add ctx.entry.name.s
         if 0 < ctx.params.data.len:
-          add " with "
+          add "["
+          var first = true
           for pair in ctx.params.data:
-            debug pair.val.PSym()
-            debug pair.key.PSym()
+            # Instantiation context has random items mixed in - not
+            # everything is a type or a symbol, so we need to filter out
+            # unwanted elements here.
+            if pair.key of PType:
+              if not first:
+                add ", "
+              first = false
+              add pair.key.PType().format() + fgYellow
+              add " = "
 
-        add "` from here\n"
+            if pair.val of PType:
+              add pair.val.PType().format() + fgGreen
+
+          add "]"
+        add " from here\n"
 
       of sckInstantiationFrom:
         add(" template/generic instantiation from here\n")

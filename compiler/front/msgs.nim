@@ -444,7 +444,9 @@ proc getContext*(conf: ConfigRef; lastinfo: TLineInfo): seq[ReportContext] =
         result.add ReportContext(
           kind: sckInstantiationOf,
           location: context.info,
-          entry: context.detail)
+          entry: context.detail,
+          params: context.params
+        )
 
     info = context.info
 
