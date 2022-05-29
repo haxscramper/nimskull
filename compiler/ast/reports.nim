@@ -67,6 +67,7 @@ type
     case kind*: ReportContextKind
       of sckInstantiationOf:
         entry*: PSym ## Instantiated entry symbol
+        params*: TIdTable
 
       of sckInstantiationFrom:
         discard

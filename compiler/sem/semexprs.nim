@@ -21,7 +21,7 @@ proc semTemplateExpr(c: PContext, n: PNode, s: PSym,
   onUse(info, s)
   # Note: This is n.info on purpose. It prevents template from creating an info
   # context when called from an another template
-  pushInfoContext(c.config, n.info, s)
+  pushInfoContext(c.config, n.info, TIdTable(), s)
   result = evalTemplate(n, s, getCurrOwner(c), c.config, c.cache,
                         c.templInstCounter, c.idgen, efFromHlo in flags)
   if efNoSemCheck notin flags: result = semAfterMacroCall(c, n, result, s, flags)
@@ -1183,7 +1183,7 @@ proc semExprNoType(c: PContext, n: PNode): PNode =
   ##
   ## Semantic/type analysis is still done as we perform a check for `discard`.
   let isPush = c.config.hasHint(rsemExtendedContext)
-  if isPush: pushInfoContext(c.config, n.info)
+  if isPush: pushInfoContext(c.config, n.info, TIdTable())
   result = discardCheck(c, semExpr(c, n, {efWantStmt}), {})
   if isPush: popInfoContext(c.config)
 

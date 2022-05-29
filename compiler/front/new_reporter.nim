@@ -22,7 +22,12 @@ import
     astalgo,
     renderer,
     typesrenderer
+  ],
+  compiler/utils/[
+    astrepr
   ]
+
+import cli_reporter as old
 
 type
   StringMismatchCandidate* = object
@@ -230,9 +235,9 @@ proc format(target: PType, other: PType = nil): ColText =
         add tname
 
       else:
-        add &"{tname} ({target.kind})" + fgGreen
+        add &"{tname}" + fgGreen
         add " != "
-        add &"{oname} ({other.kind})" + fgRed
+        add &"{oname}" + fgRed
 
     case target.kind:
       of tyGenericBody, tyBuiltInTypeClass:
@@ -292,13 +297,14 @@ proc format(mis: RankedCallMismatch): ColText =
 
     of kTypeMismatch:
       # Argment type mismatch message
-      add "proc "
-      add sem.target.name.s
       add "("
       var first = true
-      for argMis in mis.mismatches:
+      let syms = sem.target.typ.argSyms()
+      for idx, argMis in mis.mismatches:
         if not first: add ", "
         first = false
+        add $syms[idx]
+        add ": "
         add argMis.format()
 
       add ")"
@@ -345,15 +351,19 @@ proc reportCallMismatch(conf: ConfigRef, r: SemReport): ColText =
   for group in byType:
     # Convert each group's items into ranked nodes and sort candidates
     # within the byType using more advanced heuristics.
-    let expr = group[0].firstMismatch.arg
+    let first = group[0].firstMismatch
+    let expr = first.arg
     add "\nMismatch for argument #"
-    add $group[0].firstMismatch.pos
+    add $first.pos
+    add " of proc "
+    add $group[0].target.name.s + fgGreen
     add " - expression '"
-    add $group[0].firstMismatch.arg
+    add $first.arg
     add "' is of type "
-    add ", but expected any of"
+    add first.arg.typ.format() + fgRed
+    add ", but expected any of\n"
     for mis in group.toRanked(args).sortedByIt(-it.rank):
-      add "\n"
+      add "\n  "
       add mis.format()
 
   add "\nOther mismatches"
@@ -361,22 +371,62 @@ proc reportCallMismatch(conf: ConfigRef, r: SemReport): ColText =
     add "\n"
     add mis.format()
 
-proc reportFull*(conf: ConfigRef, r: SemReport): ColText =
+proc reportBody*(conf: ConfigRef, r: SemReport): ColText =
   case r.kind:
     of rsemCallTypeMismatch:
       result = reportCallMismatch(conf, r)
 
     else:
-      result.add $r.kind
+      result.add old.reportBody(conf, r)
 
-proc reportFull*(conf: ConfigRef, r: LexerReport): ColText = discard
-proc reportFull*(conf: ConfigRef, r: CmdReport): ColText = discard
-proc reportFull*(conf: ConfigRef, r: ParserReport): ColText = discard
-proc reportFull*(conf: ConfigRef, r: DebugReport): ColText = discard
-proc reportFull*(conf: ConfigRef, r: InternalReport): ColText = discard
-proc reportFull*(conf: ConfigRef, r: BackendReport): ColText = discard
-proc reportFull*(conf: ConfigRef, r: ExternalReport): ColText = discard
+proc getContext(conf: ConfigRef, ctx: seq[ReportContext]): ColText =
+  ## Get active instantiation context from the configuration
+  coloredResult()
+  for ctx in items(ctx):
+    add(old.toStr(conf, ctx.location))
+    case ctx.kind:
+      of sckInstantiationOf:
+        add " template/generic instantiation of `"
+        add ctx.entry.name.s
+        if 0 < ctx.params.data.len:
+          add " with "
+          for pair in ctx.params.data:
+            debug pair.val.PSym()
+            debug pair.key.PSym()
 
+        add "` from here\n"
+
+      of sckInstantiationFrom:
+        add(" template/generic instantiation from here\n")
+
+proc reportFull*(conf: ConfigRef, r: SemReport): ColText =
+  if r.kind == rsemProcessing and conf.hintProcessingDots:
+    result.add "."
+    return
+
+  result.add conf.getContext(r.context)
+  result.add reportBody(conf, r)
+
+proc reportFull*(conf: ConfigRef, r: LexerReport): ColText =
+  result.add old.reportFull(conf, r)
+
+proc reportFull*(conf: ConfigRef, r: CmdReport): ColText =
+  result.add old.reportFull(conf, r)
+
+proc reportFull*(conf: ConfigRef, r: ParserReport): ColText =
+  result.add old.reportFull(conf, r)
+
+proc reportFull*(conf: ConfigRef, r: DebugReport): ColText =
+  result.add old.reportFull(conf, r)
+
+proc reportFull*(conf: ConfigRef, r: InternalReport): ColText =
+  result.add old.reportFull(conf, r)
+
+proc reportFull*(conf: ConfigRef, r: BackendReport): ColText =
+  result.add old.reportFull(conf, r)
+
+proc reportFull*(conf: ConfigRef, r: ExternalReport): ColText =
+  result.add old.reportFull(conf, r)
 
 proc reportFull*(conf: ConfigRef, r: Report): ColText =
   ## Generate full version of the report (location, severity, body,
@@ -398,6 +448,7 @@ proc reportHook*(conf: ConfigRef, r: Report): TErrorHandling =
 
   elif wkind in { writeForceEnabled, writeEnabled }:
     echo conf.reportFull(r)
+    echo ""
 
   else:
     echo "?"

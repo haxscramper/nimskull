@@ -1354,7 +1354,7 @@ proc checkRaisesSpec(
           used.incl(s)
           break search
       # XXX call graph analysis would be nice here!
-      pushInfoContext(g.config, spec.info)
+      pushInfoContext(g.config, spec.info, TIdTable())
       var rr = if r.kind == nkRaiseStmt: r[0] else: r
       while rr.kind in {nkStmtList, nkStmtListExpr} and rr.len > 0:
         rr = rr.lastSon

@@ -114,7 +114,8 @@ func dropExt(path: string, doDrop: bool): string =
   ## Optionally drop `.nim` file extension
   if doDrop and path.endsWith(".nim"): path[0 .. ^5] else: path
 
-proc toStr(conf: ConfigRef, loc: TLineInfo, dropExt: bool = false): string =
+proc toStr*(
+  conf: ConfigRef, loc: TLineInfo, dropExt: bool = false): string =
   ## Convert location to printable string
   conf.wrap(
     "$1($2, $3)" % [
@@ -125,7 +126,8 @@ proc toStr(conf: ConfigRef, loc: TLineInfo, dropExt: bool = false): string =
     fgDefault,
     {styleBright})
 
-proc toStr(conf: ConfigRef, loc: ReportLineInfo, dropExt: bool = false): string =
+proc toStr*(
+  conf: ConfigRef, loc: ReportLineInfo, dropExt: bool = false): string =
   ## Convert location to printable string
   conf.wrap(
     "$1($2, $3)" % [
