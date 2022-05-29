@@ -290,10 +290,11 @@ proc format(mis: RankedCallMismatch): ColText =
       # implementation provides rather strange-looking elements
       add "unknown named argument - "
       add sem.target.formatProc()
-      add ":\n  "
+      add ":\n"
       add stringMismatchMessage(
         $sem.firstMismatch.arg,
-        sem.target.typ.argSyms().mapIt(it.sym.name.s))
+        sem.target.typ.argSyms().mapIt(it.sym.name.s)).
+        indent(2)
 
     of kTypeMismatch:
       # Argment type mismatch message
@@ -345,31 +346,40 @@ proc reportCallMismatch(conf: ConfigRef, r: SemReport): ColText =
   # once per argument position.
   let (byType, other) = r.callMismatches.groupByIdx()
 
+  let name =
+    if 0 < byType.len:
+      byType[0][0].target.name.s
+
+    else:
+      other[0].target.name.s
+
   coloredResult()
-  add "Function call error:\n"
-  add "Type mismatch failures"
+  add "Cannot call "
+  add name + fgRed
+  add " due to type mismatch failures:"
   for group in byType:
     # Convert each group's items into ranked nodes and sort candidates
     # within the byType using more advanced heuristics.
     let first = group[0].firstMismatch
     let expr = first.arg
-    add "\nMismatch for argument #"
+    add "\n  Mismatch for argument #"
     add $first.pos
-    add " of proc "
-    add $group[0].target.name.s + fgGreen
-    add " - expression '"
+    add "\n  Expression '"
     add $first.arg
     add "' is of type "
     add first.arg.typ.format() + fgRed
     add ", but expected any of\n"
     for mis in group.toRanked(args).sortedByIt(-it.rank):
-      add "\n  "
+      add "\n    "
       add mis.format()
 
-  add "\nOther mismatches"
-  for mis in other.toRanked(args).sortedByIt(-it.rank):
-    add "\n"
-    add mis.format()
+  block:
+    let other = other.toRanked(args).sortedByIt(-it.rank)
+    if 0 < len(other):
+      add "\n\nor other mismatches:"
+      for mis in other:
+        add "\n  "
+        add mis.format()
 
 proc reportBody*(conf: ConfigRef, r: SemReport): ColText =
   case r.kind:
@@ -387,7 +397,6 @@ proc getContext(conf: ConfigRef, ctx: seq[ReportContext]): ColText =
     add(old.toStr(conf, ctx.location))
     case ctx.kind:
       of sckInstantiationOf:
-        debug ctx.entry
         add " instantiation of "
         add ctx.entry.name.s
         if 0 < ctx.params.data.len:
