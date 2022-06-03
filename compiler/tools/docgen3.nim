@@ -57,6 +57,18 @@ func withParent(visitor: sink DocVisitor, user: DocEntryId): DocVisitor =
   result = visitor
   result.parent = user
 
+proc getFirstComment(node: PNode): string =
+  if node.isNil():
+    return
+
+  elif node.comment.len != 0:
+    return node.comment
+
+  elif node.safeLen() != 0:
+    for sub in node:
+      return getFirstComment(sub)
+
+  
 proc addDocText(db: var DocDb, node: PNode, module: DocEntryId): DocTextId =
   if node.kind == nkCall:
     # runnable example
@@ -69,7 +81,7 @@ proc addDocText(db: var DocDb, node: PNode, module: DocEntryId): DocTextId =
 
   else:
     result = db.add DocText(
-      text: node.comment,
+      text: node.getFirstComment(),
       location: db.add nodeLocation(node))
 
 proc registerPreUses(
@@ -348,6 +360,7 @@ proc registerTypeDef(
     of deftObject:
       let declKind = db.classifyDeclKind(decl)
       result = db.newDocEntry(visitor, declKind, decl.nameNode())
+
       if decl.objBase.isSome():
         let base = decl.objBase.get()
         if db.approxContains(base):
@@ -357,8 +370,6 @@ proc registerTypeDef(
 
 
       let objId = result
-
-
       var db = addr db
       # "'db' is of type <var DocDb> which cannot be captured as it would
       # violate memory safety". Yes, the `db` is a `ref` type, but I still
@@ -732,7 +743,6 @@ proc docInSemOpen(
   var back = DocBackend(graph.backend)
   var db = back.db
 
-  echo ">> ", module
   var ctx = DocContext(
     db: db,
     config: graph.config,
