@@ -2423,7 +2423,7 @@ func suffixShort(conf: ConfigRef, r: ReportTypes): string {.inline.} =
   else:
     ""
 
-proc suffix(
+proc suffix*(
     conf: ConfigRef,
     r: ReportTypes
   ): string =

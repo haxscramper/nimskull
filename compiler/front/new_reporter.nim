@@ -58,6 +58,67 @@ proc stringMismatchCandidates*(
         target: str
       )
 
+# TODO store original item index with the expected candidates, and return
+# it with final results in order to properly associate information with the
+# original items. Things like spelling candidates for procedures might
+# benefit from this - I can show spelling item *and* it's signature.
+proc mismatchCandidates*(
+      input: string,
+      expected: openArray[string]): seq[StringMismatchCandidate] =
+
+   let expected = deduplicate(expected)
+   return stringMismatchCandidates(input, expected).sortedByIt(it.distance)
+
+proc countEdits(best: StringMismatchCandidate): int =
+  for edit in best.edits:
+    if edit.kind != sekKeep:
+      inc result
+
+proc inlineFormatter(): DiffFormatConf =
+  var fmt = diffFormatter(false)
+  let default = fmt.formatChunk
+  fmt.lineSplit = proc(s: string): seq[string] = mapIt(s, $it)
+  fmt.formatChunk = proc(
+    text: string, mode, secondary: SeqEditKind, inline: bool): ColText =
+    if mode == sekReplace and inline:
+      if secondary == sekDelete:
+        text + fgRed
+
+      else:
+        text + fgGreen
+
+    else:
+      default(text, mode, secondary, inline)
+
+  return fmt
+
+
+proc formatEdit*(input: string, best: StringMismatchCandidate): ColText =
+  var fmt = inlineFormatter()
+  coloredResult()
+  if countEdits(best) < min(3, input.len div 2):
+    add formatInlineDiff(input, best.target, fmt)
+
+  else:
+    add input + fgRed
+    add " -> "
+    add best.target + fgGreen
+
+proc formatAlternatives(input: string, results: seq[StringMismatchCandidate]): ColText =
+  coloredResult()
+  var fmt = inlineFormatter()
+  for idx, alt in results:
+    if idx > 0:
+      add " "
+
+    if countEdits(alt) < min(3, input.len div 2):
+      add formatInlineDiff(input, alt.target, fmt)
+
+    else:
+      add alt.target + fgGreen
+
+    add "?"
+
 proc stringMismatchMessage*(
     input: string,
     expected: openArray[string],
@@ -67,20 +128,12 @@ proc stringMismatchMessage*(
 
   coloredResult()
 
-  let expected = deduplicate(expected)
-
+  let results = mismatchCandidates(input, expected)
   if expected.len == 0:
     add "No matching alternatives"
     return
 
-  var results = stringMismatchCandidates(input, expected).
-    sortedByIt(it.distance)
-
   let best = results[0]
-
-  var fmt = diffFormatter(false)
-  fmt.lineSplit = proc(s: string): seq[string] =
-                    mapIt(s, $it)
 
   if best.distance > int(input.len.float * 0.8):
     add "no close matches to "
@@ -96,33 +149,13 @@ proc stringMismatchMessage*(
     add "Did you mean to use '"
     add best.target + fgYellow
     add "'?'"
-    var edits = 0
-    for edit in best.edits:
-      if edit.kind != sekKeep:
-        inc edits
 
     if fixSuggestion:
-      if edits < min(3, input.len div 2):
-        add " ("
-        add formatInlineDiff(input, best.target, fmt)
-        add ")"
-
-      else:
-        add " ("
-        add input + fgRed
-        add " -> "
-        add best.target + fgGreen
-        add ")"
+      add formatEdit(input, best)
 
     if showAll and expected.len > 1:
       add "\n  ("
-      for idx, alt in results[1 ..^ 1]:
-        if idx > 0:
-          add " "
-
-        add alt.target + styleItalic + termFg(4, 2, 3)
-        add "?"
-
+      add formatAlternatives(input, results[1..^1])
       add ")"
 
 ## Large rank/cost value means the error was severe (error in the first
@@ -382,12 +415,30 @@ proc reportCallMismatch(conf: ConfigRef, r: SemReport): ColText =
         add mis.format()
 
 proc reportBody*(conf: ConfigRef, r: SemReport): ColText =
+  coloredResult()
   case r.kind:
     of rsemCallTypeMismatch:
-      result = reportCallMismatch(conf, r)
+      add reportCallMismatch(conf, r)
+
+    of rsemUndeclaredIdentifier:
+      add "undeclared identifier: '" & r.str & "' - "
+      let candidates = mismatchCandidates(
+        r.str, mapIt(r.spellingCandidates, it.sym.name.s))
+      if 0 < candidates.len:
+        add "did you mean to use "
+        add formatEdit(r.str, candidates[0])
+        if 1 < candidates.len:
+          add " ("
+          add formatAlternatives(r.str, candidates[1 ..^ 1])
+          add ")"
+
+        add "?"
+
+      else:
+        add "no matching alternatives"
 
     else:
-      result.add old.reportBody(conf, r)
+      add old.reportBody(conf, r)
 
 proc getContext(conf: ConfigRef, ctx: seq[ReportContext]): ColText =
   ## Format report context message
@@ -429,6 +480,8 @@ proc reportFull*(conf: ConfigRef, r: SemReport): ColText =
 
   result.add conf.getContext(r.context)
   result.add reportBody(conf, r)
+  result.add "\n"
+  result.add conf.suffix(r)
 
 proc reportFull*(conf: ConfigRef, r: LexerReport): ColText =
   result.add old.reportFull(conf, r)
@@ -465,6 +518,9 @@ proc reportFull*(conf: ConfigRef, r: Report): ColText =
     of repExternal: result = conf.reportFull(r.externalReport)
 
 proc reportHook*(conf: ConfigRef, r: Report): TErrorHandling =
+  conf.incl(cnCurrent, rintMsgOrigin)
+  conf.incl(cnCurrent, rintErrKind)
+
   let wkind = conf.writabilityKind(r)
   if wkind == writeDisabled:
     return
