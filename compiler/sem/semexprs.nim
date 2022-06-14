@@ -3268,6 +3268,20 @@ proc enumFieldSymChoice(c: PContext, n: PNode, s: PSym): PNode =
 proc semExpr(c: PContext, n: PNode, flags: TExprFlags = {}): PNode =
   when defined(nimCompilerStacktraceHints):
     setFrameMsg c.config$n.info & " " & $n.kind
+
+  when defined(nimDebugUtils):
+    # HACK debugging workaround that makes `undef(nimDebugUtils)` and
+    # similar operations trigger a lot earlier and thus cut cuts out a
+    # deedles chunk of the semantic checking trace tail.
+    if n.kind == nkPragma and n[0].kind in { nkCommand, nkCall }:
+      let call = n[0]
+      if call[0].kind == nkIdent and
+         call[0].getIdentStr() == "undef":
+        let what = call[1].getIdentStr()
+        if what in ["nimCompilerDebug", "nimCompilerDebugStackTrace"]:
+          c.config.undefSymbol(what)
+
+
   addInNimDebugUtils(c.config, "semExpr", n, result, flags)
 
   result = n

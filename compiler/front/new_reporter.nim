@@ -427,13 +427,6 @@ proc reportCallMismatch(conf: ConfigRef, r: SemReport): ColText =
         add "\n  "
         add mis.format()
 
-proc getStr(n: PNode): string =
-  case n.kind:
-    of nkIdent: result = n.ident.s
-    of nkSym: result = n.sym.name.s
-    else:
-      echo "???????>>>>>>>> ", n.kind
-      assert false
 
 proc objFields(obj: PNode): seq[PNode] =
   ## Collect list of fields from the object.
