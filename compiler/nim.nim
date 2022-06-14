@@ -135,8 +135,11 @@ when compileOption("gc", "refc"):
   # the new correct mark&sweep collector is too slow :-/
   GC_disableMarkAndSweep()
 
+import compiler/utils/astrepr
+
 when not defined(selftest):
   var conf = newConfigRef(cli_reporter.reportHook)
+  implicitTReprConf = onlyStructureTReprConf
   conf.writeHook =
     proc(conf: ConfigRef, msg: string, flags: MsgFlags) =
       msgs.msgWrite(conf, msg, flags)

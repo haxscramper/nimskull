@@ -10,7 +10,8 @@ import
     algorithm,
     sequtils,
     strformat,
-    strutils
+    strutils,
+    enumerate
   ],
   compiler/front/[
     options
@@ -58,16 +59,16 @@ proc stringMismatchCandidates*(
         target: str
       )
 
-# TODO store original item index with the expected candidates, and return
-# it with final results in order to properly associate information with the
-# original items. Things like spelling candidates for procedures might
-# benefit from this - I can show spelling item *and* it's signature.
+type ItDiff = tuple[it: StringMismatchCandidate, idx: int]
 proc mismatchCandidates*(
       input: string,
-      expected: openArray[string]): seq[StringMismatchCandidate] =
+      expected: openArray[string]): seq[ItDiff] =
 
    let expected = deduplicate(expected)
-   return stringMismatchCandidates(input, expected).sortedByIt(it.distance)
+   for idx, it in enumerate(stringMismatchCandidates(input, expected)):
+     result.add((it, idx))
+
+   return result.sortedByIt(it.it.distance)
 
 proc countEdits(best: StringMismatchCandidate): int =
   for edit in best.edits:
@@ -119,6 +120,18 @@ proc formatAlternatives(input: string, results: seq[StringMismatchCandidate]): C
 
     add "?"
 
+proc didYouMean(input: string, candidates: seq[ItDiff]): ColText =
+  coloredResult()
+  add "did you mean to use "
+  add formatEdit(input, candidates[0].it)
+  if 1 < candidates.len:
+    add " ("
+    add formatAlternatives(input, candidates[1 ..^ 1].mapIt(it.it))
+    add ")"
+
+  add "?"
+
+
 proc stringMismatchMessage*(
     input: string,
     expected: openArray[string],
@@ -133,7 +146,7 @@ proc stringMismatchMessage*(
     add "No matching alternatives"
     return
 
-  let best = results[0]
+  let best = results[0].it
 
   if best.distance > int(input.len.float * 0.8):
     add "no close matches to "
@@ -143,7 +156,7 @@ proc stringMismatchMessage*(
     for it in results[0 .. min(results.high, 3)]:
       if not first: add " or "
       first = false
-      add it.target + fgYellow
+      add it.it.target + fgYellow
 
   else:
     add "Did you mean to use '"
@@ -155,7 +168,7 @@ proc stringMismatchMessage*(
 
     if showAll and expected.len > 1:
       add "\n  ("
-      add formatAlternatives(input, results[1..^1])
+      add formatAlternatives(input, results[1..^1].mapIt(it.it))
       add ")"
 
 ## Large rank/cost value means the error was severe (error in the first
@@ -414,6 +427,40 @@ proc reportCallMismatch(conf: ConfigRef, r: SemReport): ColText =
         add "\n  "
         add mis.format()
 
+proc getStr(n: PNode): string =
+  case n.kind:
+    of nkIdent: result = n.ident.s
+    of nkSym: result = n.sym.name.s
+    else:
+      echo "???????>>>>>>>> ", n.kind
+      assert false
+
+proc objFields(obj: PNode): seq[PNode] =
+  ## Collect list of fields from the object.
+  # I failed to understand how field lookup is perofmed, it is all mixed in
+  # with the general overload resolution, so I have almost no chances on
+  # decoding this abomination right now
+  proc aux(n: PNode, r: var seq[PNode]) =
+    case n.kind:
+      of nkTypeDef:
+        for sub in n[2][2]:
+          aux(sub, r)
+
+      of nkRecList:
+        for sub in n:
+          aux(n, r)
+
+
+      of nkIdentDefs:
+        for it in n.sons[0..^3]:
+          r.add it
+
+      else:
+        debug obj
+        assert false, $n.kind
+
+  aux(obj, result)
+
 proc reportBody*(conf: ConfigRef, r: SemReport): ColText =
   coloredResult()
   case r.kind:
@@ -425,17 +472,37 @@ proc reportBody*(conf: ConfigRef, r: SemReport): ColText =
       let candidates = mismatchCandidates(
         r.str, mapIt(r.spellingCandidates, it.sym.name.s))
       if 0 < candidates.len:
-        add "did you mean to use "
-        add formatEdit(r.str, candidates[0])
-        if 1 < candidates.len:
-          add " ("
-          add formatAlternatives(r.str, candidates[1 ..^ 1])
-          add ")"
-
-        add "?"
-
+        add didYouMean(r.str, candidates)
       else:
         add "no matching alternatives"
+
+    of rsemDuplicateCaseLabel:
+      addf(
+        "duplicate case label: $# on line $# overlaps with $# on line $#",
+        $r.overlappingGroup + fgRed,
+        $r.overlappingGroup.info.line,
+        $r.ast + fgGreen,
+        $r.ast.info.line
+      )
+
+    of rsemUndeclaredField:
+      # TODO check if field had been exported or not
+      let flds = objFields(r.sym.ast).mapIt(it.getStr())
+      let candidates = mismatchCandidates(r.str, flds)
+      addf(
+        "undeclared field '$#' for type $# - $#",
+        $r.ast,
+        $r.sym.typ,
+        tern(
+          candidates.len == 0,
+          "object has no fields" + fgDefault,
+          didYouMean($r.ast, candidates)
+        )
+      )
+
+
+      # debug r.ast
+      # debug r.sym.typ
 
     else:
       add old.reportBody(conf, r)

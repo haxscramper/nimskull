@@ -3639,16 +3639,18 @@ proc reportHook*(conf: ConfigRef, r: Report): TErrorHandling =
       var indent {.global.}: int
       if r.kind == rdbgTraceStep:
         indent = r.debugReport.semstep.level
-      case r.kind
-      of rdbgTracerKinds:
-        conf.writeln(conf.reportFull(r))
-      of repSemKinds:
-        if 0 < indent:
-          for line in conf.reportFull(r).splitLines():
-            conf.writeln("  ]", repeat("  ", indent), " ! ", line)
+
+      case r.kind:
+        of rdbgTracerKinds:
+          conf.writeln(conf.reportFull(r))
+        of repSemKinds:
+          if 0 < indent:
+            for line in conf.reportFull(r).splitLines():
+              conf.writeln("  ]", repeat("  ", indent), " ! ", line)
+          else:
+            conf.writeln(conf.reportFull(r))
         else:
           conf.writeln(conf.reportFull(r))
-      else:
-        conf.writeln(conf.reportFull(r))
+
     else:
       conf.writeln(conf.reportFull(r))
