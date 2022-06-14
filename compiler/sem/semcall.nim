@@ -340,7 +340,6 @@ proc resolveOverloads(c: PContext, n: PNode,
       else: return
 
     template tryOp(x) =
-      echo "Trying operator", x
       let op = newIdentNode(getIdent(c.cache, x), n.info)
       n[0] = op
       pickBest(op)

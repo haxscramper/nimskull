@@ -3124,9 +3124,9 @@ const
   reportCaller = on
 
 proc reportBody*(conf: ConfigRef, r: DebugReport): string =
+  ## NOTE !!DEBUG Main part of the debug report formatting.
   assertKind r
   func toStr(opc: TOpcode): string = substr($opc, 3)
-
   case DebugReportKind(r.kind):
     of rdbgTraceStep:
       let
@@ -3164,6 +3164,9 @@ proc reportBody*(conf: ConfigRef, r: DebugReport): string =
           ""))
 
       var res = addr result
+      # NOTE !!DEBUG This part controls printing of the extra data for each
+      # step. `field` is a shorthand for data output, subsequent `case`
+      # dispatches into specific properties and prints fields.
       proc field(name: string, value: string = "\n") =
         res[].add "\n"
         res[].add repeat(" ", indent)
@@ -3259,6 +3262,7 @@ proc reportBody*(conf: ConfigRef, r: DebugReport): string =
 
 
     of rdbgTraceLine:
+      # Inline tracing annotations
       let ind = repeat("  ", r.ctraceData.level)
       var
         paths: seq[string]
@@ -3621,10 +3625,13 @@ proc reportHook*(conf: ConfigRef, r: Report): TErrorHandling =
   # be written.
   if wkind == writeDisabled:
     return
+
   elif r.kind in rdbgTracerKinds and conf.isDefined(traceDir):
     rotatedTrace(conf, r)
+
   elif wkind == writeForceEnabled:
     echo conf.reportFull(r)
+
   elif r.kind == rsemProcessing and conf.hintProcessingDots:
     # REFACTOR 'processing with dots' - requires special hacks, pretty
     # useless, need to be removed in the future.
@@ -3643,12 +3650,15 @@ proc reportHook*(conf: ConfigRef, r: Report): TErrorHandling =
       case r.kind:
         of rdbgTracerKinds:
           conf.writeln(conf.reportFull(r))
+
         of repSemKinds:
           if 0 < indent:
             for line in conf.reportFull(r).splitLines():
               conf.writeln("  ]", repeat("  ", indent), " ! ", line)
+
           else:
             conf.writeln(conf.reportFull(r))
+
         else:
           conf.writeln(conf.reportFull(r))
 
