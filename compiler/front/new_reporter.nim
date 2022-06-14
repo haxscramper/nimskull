@@ -456,6 +456,7 @@ proc objFields(obj: PNode): seq[PNode] =
 
 proc reportBody*(conf: ConfigRef, r: SemReport): ColText =
   coloredResult()
+  echo "Semantic report body", r.kind
   case r.kind:
     of rsemCallTypeMismatch:
       add reportCallMismatch(conf, r)
@@ -480,7 +481,7 @@ proc reportBody*(conf: ConfigRef, r: SemReport): ColText =
 
     of rsemUndeclaredField:
       # TODO check if field had been exported or not
-      let flds = objFields(r.sym.ast).mapIt(it.getStr())
+      let flds = objFields(r.sym.ast).mapIt(it.getIdentStr())
       let candidates = mismatchCandidates(r.str, flds)
       addf(
         "undeclared field '$#' for type $# - $#",
