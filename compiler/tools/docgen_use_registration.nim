@@ -1,3 +1,7 @@
+## This module implements a usage registration for the documentation
+## database. It mainly populates data that will go into `occurrences` table
+## of the final database.
+
 import
   ./docgen_types,
   ./docgen_file_tracking,
@@ -30,11 +34,11 @@ import std/options as std_options
 
 type
   DocVisitor* = object
-    parent*: DocEntryId
+    parent*: DocEntryId ## Current active parent for the visitation
     docUser*: DocEntryId ## Active toplevel user
     declContext*: DocDeclarationContext ## Active documentation declaration
     ## context that will be passed to new documentable entry on construction.
-    activeModule*: DocEntryId
+    activeModule*: DocEntryId ## Current module being processed
 
 proc newDocEntry*(
     db: var DocDb,
@@ -42,6 +46,8 @@ proc newDocEntry*(
     kind: DocEntryKind,
     name: PNode
   ): DocEntryId =
+  ## Create new documentable entry using provided information and
+  ## declaration context + parent information from the visitor.
   assert not visitor.parent.isNil()
   db.newDocEntry(
     kind = kind,
@@ -56,6 +62,8 @@ proc newDocEntry*(
     kind: DocEntryKind,
     name: PNode
   ): DocEntryId =
+  ## Create new documentable entry using provided information and
+  ## declaration context from the visitor.
 
   db.newDocEntry(
     kind = kind,
@@ -87,9 +95,9 @@ iterator visitWhen*(visitor: DocVisitor, node: PNode): (DocVisitor, PNode) =
 
 type
   RegisterStateKind = enum
-    rskTopLevel
+    rskTopLevel ## Registering entry at the toplevel part
     rskInheritList
-    rskPragma
+    rskPragma ## In the pragma body
     rskObjectFields ## Object field groups
     rskObjectBranch ## Object branch or switch expression
     rskEnumFields ## Enum field groups
@@ -116,6 +124,10 @@ type
 
 
   RegisterState* = object
+    ## Current state of the usage registration. There is no global mutable
+    ## object of the state - instead some of the recursive invokations of
+    ## the `reg` procedure copy it, add more contextual data (using `+`
+    ## procs) and pass it down
     state: seq[RegisterStateKind]
     switchId: DocEntryId
     localUser: Option[DocEntryId]
@@ -127,24 +139,26 @@ type
     ## code generated form macro expansions.
 
 proc `+`(state: RegisterState, kind: RegisterStateKind): RegisterState =
+  ## Add new register state entry to the stack, return new entry
   result = state
   result.state.add kind
 
 proc `+`(state: RegisterState, user: DocEntryId): RegisterState =
+  ## Override curent user in the state copy
   assert not user.isNil()
   result = state
   result.user = user
 
 proc `+=`(state: var RegisterState, kind: RegisterStateKind) =
+  ## Add state kind to the stack
   state.state.add kind
 
-
-
-
 proc top(state: RegisterState): RegisterStateKind =
+  ## Return top part of the register state stack
   return state.state[^1]
 
 proc hasAll(state: RegisterState, kinds: set[RegisterStateKind]): bool =
+  ## Check if the registration state has all the kinds at once
   for kind in kinds:
     var has = false
     if kind in state.state:
@@ -156,21 +170,26 @@ proc hasAll(state: RegisterState, kinds: set[RegisterStateKind]): bool =
   return true
 
 proc hasAny(state: RegisterState, kinds: set[RegisterStateKind]): bool =
+  ## Check if register state has at least one of the provided `kinds`
+  ## anywhere in the stack.
   for part in state.state:
     if part in kinds:
       return true
 
 
 proc initRegisterState*(): RegisterState =
+  ## Create new empty register stack
   RegisterState(state: @[rskTopLevel])
 
 proc isEnum*(node: PNode): bool =
+  ## Check if the node is an enum definition
   case node.kind:
     of nkEnumTy:  true
     of nkTypeDef: node[2].isEnum()
     else:         false
 
-proc isAliasDecl(node: PNode): bool =
+proc isAliasDecl*(node: PNode): bool =
+  ## Check if node is an alias type declaration
   case node.kind:
     of nkObjectTy, nkEnumTy: false
     of nkPtrTy, nkRefTy:     isAliasDecl(node[0])
@@ -179,6 +198,7 @@ proc isAliasDecl(node: PNode): bool =
 
 
 proc getEffects(node: PNode, effectPos: int): PNode =
+  ## Get list of the effects for the given procedure definition node
   if node.safeLen > 0 and
      node[0].len >= effectListLen and
      not isNil(node[0][effectPos]):
