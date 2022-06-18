@@ -80,7 +80,8 @@ defined in `docgen_types.nim`
    + `implicit`: if the code is an implicitly runnable example contains
      the ID of the file from which code had been extracted.
    + `text`: original text or code
-   + `location` (refs `locations.id`): ID of the location of the text
+   + `location` (refs `locations.id`): ID of the location of the text. Some
+     of the documentation pieces represent whole files (`.rst`).
    + `tree`: if entry is not a runnable examples, contains serialized
      **processed** tree in JSON form. For more details see the next section
      on documentation text representation.
@@ -116,7 +117,8 @@ defined in `docgen_types.nim`
    similar to the `locations`, but provides both `line_start` and
    `line_end` instead of a single point in code.
 7. `files`: Extended information about files used in the project. Contains
-   ID, absolute (`abs`) and relative (`rel`) (to the project) fields.
+   ID, absolute (`abs`) and relative (`rel`) (to the project) fields. Both
+   code files and extra documentation (`.rst`) is referenced in this table.
 8. `deprecated`: Extra information about deprecation annotations for
    entries that had it.
    + `id` (refs `entries.id`): deprecation annotation target
