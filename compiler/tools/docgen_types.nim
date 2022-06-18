@@ -78,8 +78,6 @@ type
     ndkPackage = "package" ## System or programming language package
     ## (library). If present used as toplevel grouping element.
 
-
-
   DocProcKind* = enum
     dpkRegular = "regular" ## Regular user-defined procedure
     dpkOperator = "operator" ## Infix/prefix operator
@@ -232,6 +230,7 @@ type
     dttRefDocId ## Reference to the documentable entry
     dttUrl ## Literal standalone URL
     dttSignature ## Link to the element using it's signature
+    dttSubtreeLink ## Link to the subtree in the same document
     dttIndexLink ## `:idx`. Ideally this link should be resolved into
     ## reference to the
     dttLink ## Link to external or internal entry - `Link[<description>,
@@ -241,15 +240,25 @@ type
     ## different link kinds that current RST parser has - `:idx:`, raw URL,
     ## formatted URL, (ab)use of link syntax to refer to the documentable
     ## entries in the database.
+    dttTable
+    dttTableRow
+    dttTableHeaderCell
+    dttTableDataCell
     dttDefList
+    dttDefinitionList
     dttUnorderedList
-    dttAdmonition
     dttOrderedList
+    dttAdmonition
     dttListItem
     dttEmpty
+    dttBlockQuote
+    dttEmoji
 
 
-const dttTextKinds* = { dttText, dttUrl, dttIndexLink, dttSignature }
+const dttTextKinds* = {
+  dttText, dttUrl, dttIndexLink, dttSignature,
+  dttSubtreeLink, dttEmoji, dttEmoji
+}
 
 type
   DocTextTree* = ref object
@@ -267,6 +276,7 @@ type
         code*: seq[DocTextTree]
         isInline*: bool
         lang*: string
+        # interpretation*: string
         properties*: seq[(string, string)]
 
       of dttAdmonition:

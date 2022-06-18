@@ -2,10 +2,13 @@ import
   compiler/tools/[
     docgen3,
     docgen_types,
-    docgen_sqlite
+    docgen_sqlite,
+    docgen_text
   ],
   compiler/front/[
-    options
+    options,
+    cli_reporter,
+    msgs
   ],
   compiler/utils/[
     pathutils
@@ -16,10 +19,21 @@ import
 
 let outSql = AbsoluteFile(commandLineParams()[0])
 
-var newConf = ConfigRef()
+var newConf = newConfigRef(cli_reporter.reportHook)
+
+newConf.writeHook =
+  proc(conf: ConfigRef, msg: string, flags: MsgFlags) =
+    msgs.msgWrite(conf, msg, flags)
+
+newConf.writelnHook =
+  proc(conf: ConfigRef, msg: string, flags: MsgFlags) =
+    conf.writeHook(conf, msg & "\n", flags)
+
 var newDb = DocDb()
 readSqlite(newConf, newDb, outSql)
 echo "read sqlite from ", outSql.string
+
+unparseComments(newDb, newConf)
 
 let outSql2 = outSql.changeFileExt("sqlite2")
 newConf.writeSqlite(newDb, outSql2)
