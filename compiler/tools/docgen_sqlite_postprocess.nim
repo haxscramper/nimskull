@@ -33,6 +33,9 @@ var newDb = DocDb()
 readSqlite(newConf, newDb, outSql)
 echo "read sqlite from ", outSql.string
 
+let docs = AbsoluteDir(currentSourcePath().parentDir().parentDir().parentDir() / "doc")
+echo docs
+unparseExtraDocs(newDb, newConf, docs)
 unparseComments(newDb, newConf)
 
 let outSql2 = outSql.changeFileExt("sqlite2")

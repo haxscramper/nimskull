@@ -226,6 +226,7 @@ type
     ## rendering back code elements in defintions *and* regular code blocks
     ## supplied in `runnableExamples`.
     dttBold ## Bold text
+    dttOverline ## Overline text
     dttItalic ## Italic text
     dttRefDocId ## Reference to the documentable entry
     dttUrl ## Literal standalone URL
@@ -233,6 +234,7 @@ type
     dttSubtreeLink ## Link to the subtree in the same document
     dttIndexLink ## `:idx`. Ideally this link should be resolved into
     ## reference to the
+    dttFootnoteRef ## Footnote reference symbol
     dttLink ## Link to external or internal entry - `Link[<description>,
     ## <target>]` where `description` can be paragraph and target can be a
     ## `RefDocId`, `Url`, `Index` entry and any other kind of link target
@@ -242,22 +244,32 @@ type
     ## entries in the database.
     dttTable
     dttTableRow
+    dttFootnote
     dttTableHeaderCell
     dttTableDataCell
     dttDefList
     dttDefinitionList
     dttUnorderedList
     dttOrderedList
+    dttOptionsList
     dttAdmonition
     dttListItem
-    dttEmpty
+    dttEmpty ## Empty node
+    dttPass ## Raw passthrough
+    dttDirArg ## Directive argument
+    dttContents ## `.. contents` directive
     dttBlockQuote
+    dttHeadline
+    dttSubstitute
     dttEmoji
 
 
 const dttTextKinds* = {
   dttText, dttUrl, dttIndexLink, dttSignature,
-  dttSubtreeLink, dttEmoji, dttEmoji
+  dttSubtreeLink, dttEmoji, dttEmoji,
+  dttSubstitute,
+  dttDirArg,
+  dttFootnoteRef
 }
 
 type
@@ -269,7 +281,13 @@ type
       of dttRefDocId:
         docId*: DocEntryId
 
-      of dttTextKinds:
+      of dttHeadline:
+        # REFACTOR this is not necessary, headline levels can be determined
+        # via nesting. For now this is kept around to make translation from
+        # the RST easier.
+        level*: int
+
+      of dttTextKinds, dttFootnote:
         str*: string
 
       of dttCode:
