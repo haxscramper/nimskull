@@ -33,6 +33,34 @@ into this section.
 Internal implementation
 =======================
 
+Documentation processing pipeline consists of several stages, each dealing
+with it's own set of data that is repeatedly transformed from one
+representation to another - similar to how most of the compiler should be
+functioning. High-level overview of the involved stages:
+
+1. **Before sem**: First processing of the input is performed right before
+   the semantic pass - this allows us to register most intricate details
+   about the code structure: conditionally compiled and included files,
+   fields hidden behind `when` check and so on.
+2. **During sem**: Some of the most important activity happens *during*
+   semantic pass - macro expansion. In order to properly track all the
+   triggers and register generated source code (for later indexing) hooks
+   have been added to trigger when macro or template is expanded
+3. **After sem**: After semantic pass is completed each toplevel statement
+   is examined in multiple smaller stages:
+
+   a. *Definition registration* if statement is a entry declaration
+      (procedure, function, method, type section etc.) it is unparsed into
+      more concisely structured type `docgen_unparser.DefTree`, which
+      compacts ~165 different enum kinds and multitude of semantic meanings
+      into 12 documentable types with explicit semantic meaning
+      (`docgen_unparser.DefTreeKind`)
+
+   b. *Usage registration* each part of the documentable statement is
+      further processed to get information about all usages of the types
+      and procedures. Each toplevel statement is recursively traversed and
+      all symbols are added in the database as occurrences.
+
 Custom targets
 ==============
 
