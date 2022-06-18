@@ -326,32 +326,6 @@ declareStoreType(DocText)
 
 
 type
-  DocTypeHeandkind* = enum
-    dthGenericParam ## Unresolved generic parameter
-    dthTypeclass ## Typeclass
-    dthConcreteType ## Concrete resolved class
-
-  DocIdentKind* = enum
-    diValue ## Pass-by value function argument or regular identifier
-    diPointer ## Identifier passed by pointer
-    diMutReference ## Mutable reference
-    diConstReference ## Immutable reference
-    diSink ## rvalue/sink parameters
-
-  DocIdent* = object
-    ## Identifier.
-    ##
-    ## - WHY :: Callback itself is represented as a type, but it is also
-    ##   possible to have named arguments for callback arguments (though
-    ##   this is not mandatory). @field{entry} should only point to
-    ##   documentable entry of kind [[code:ndkField]].
-
-    ident*: string ## Identifier name
-    kind*: DocIdentKind ##
-    identType*: PType ## Identifier type
-    value*: Option[string] ## Optional expression for initialization value
-    entry*: DocEntryId
-
   DocEntrySet* = object
     ids*: IntSet
 
@@ -423,11 +397,12 @@ type
         requires*: seq[DocRequires] ## List of required packages
 
       of ndkStructKinds:
-        superTypes*: seq[DocEntryId]
+        superTypes*: seq[DocEntryId] ## Parent types for the object or
+                                     ## structure definitions
 
       of ndkEnumField:
-        enumValueOverride*: Option[PNode]
-        enumStringOverride*: Option[string]
+        enumValueOverride*: Option[PNode] ## Expression for the enum value override
+        enumStringOverride*: Option[string] ## String representation override text
 
       of ndkArg:
         argType*: PNode ## Argument type description
@@ -480,22 +455,28 @@ type
   DocDb* = ref object of RootRef
     deprecatedMsg*: Table[DocEntryId, string]
 
-    entries*: DocEntryStore
-    currentTop*: DocEntry
-    top*: seq[DocEntryId]
-    fileModules*: Table[FileIndex, DocEntryId]
-    named*: Table[string, DocEntryId]
-    expandedNodes*: Table[int, ExpansionId]
-    extents*: DocExtentStore
-    locations*: DocLocationStore
-    docs*: DocTextStore
+    entries*: DocEntryStore ## Full list of the documentable entries processed
+    currentTop*: DocEntry ## Current toplevel, 'parent' documentable entry
+    top*: seq[DocEntryId] ## Full list of the 'top' entries - ones that are
+                          ## not nested in anything else
+    fileModules*: Table[FileIndex, DocEntryId] ## Mapping between file ID
+    ## and the ID of the documentable entry generated from this module's
+    ## file
+    named*: Table[string, DocEntryId] ## Mapping between named documentable
+    ## entries and their respective names. This is used for special
+    ## occasions like `--define`-introduced elements, that are not scoped,
+    ## global, can be used but cannot be defined.
+    expandedNodes*: Table[int, ExpansionId] ## Map between original node
+    ## id and the registered expansion
+    extents*: DocExtentStore ## Full list of the extent information
+    locations*: DocLocationStore ## All locations
+    docs*: DocTextStore ## All pieces of the documentation
     expansions*: ExpansionStore ## List of known expansion bettween
     ## open/close for module
-    occurencies*: DocOccurStore
-    sigmap*: Table[PSym, DocEntryId]
+    occurencies*: DocOccurStore ## Every tracked occurence
+    sigmap*: Table[PSym, DocEntryId] ## Map from symbol to the documentable
+                                     ## entry ID
     locationSigmap*: Table[ApproximateSymbolLocation, DocEntryId] ##[HACK
-
-
 
 This field maps declarations only based on the /identifier location/ - this
 is necessary becase even after *sem* layer you can get /untyped/ fields on

@@ -94,7 +94,7 @@ defined in `docgen_types.nim`
 
    + `tree`: if entry is not a runnable examples, contains serialized
      **processed** tree in JSON form. For more details see the next section
-     on documentation text representation.
+     on `Documentation text representation`_.
 
 3. `entries`: complete list of all documentable entries that had ever
    been encountered in the code
@@ -176,7 +176,9 @@ this field also resolves embedded links, and assigns IDs where possible
 .. Also, if we plan to switch from RST to the Asciidoctor, abstracted
    representation will help here as well.
 
-JSON is generated automatically from the `docgen_types.DocTextTree`
+JSON is generated automatically from the `docgen_types.DocTextTree` - for
+documentation in the particular details of the enum and field please refer
+to the module itself.
 
 Nim-Specific capabilities
 -------------------------
