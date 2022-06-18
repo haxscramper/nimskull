@@ -48,19 +48,6 @@ template setNodeId() =
       echo "KIND ", result.kind
       writeStackTrace()
 
-template `[]`*(n: Indexable, i: int): Indexable =
-  n.sons[i]
-
-template `[]=`*(n: Indexable, i: int; x: Indexable) =
-  n.sons[i] = x
-
-template `[]`*(n: Indexable, i: HSlice[int, int]): seq[Indexable] =
-  n.sons[i.a .. i.b.int]
-
-template `[]`*(n: Indexable, i: HSlice[int, BackwardsIndex]): seq[Indexable] =
-  n.sons[i.a .. n.len - i.b.int]
-
-
 func newNodeI*(kind: TNodeKind, info: TLineInfo): PNode =
   ## new node with line info, no type, and no children
   result = PNode(kind: kind, info: info, reportId: emptyReportId)
@@ -613,11 +600,3 @@ proc toHumanStr*(kind: TSymKind): string =
 proc toHumanStr*(kind: TTypeKind): string =
   ## strips leading `tk`
   result = toHumanStrImpl(kind, 2)
-
-proc skipAddr*(n: PNode): PNode {.inline.} =
-  (if n.kind == nkHiddenAddr: n[0] else: n)
-
-proc isNewStyleConcept*(n: PNode): bool {.inline.} =
-  assert n.kind == nkTypeClassTy
-  result = n[0].kind == nkEmpty
-

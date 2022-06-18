@@ -336,6 +336,7 @@ type
 
     cppCustomNamespace*: string
 
+    docMode*: TDocMode
     configVars*: StringTableRef ## Additional configuration variables for
     ## providing extra options for different compiler subsystems.
 

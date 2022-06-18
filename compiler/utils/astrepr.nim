@@ -898,7 +898,7 @@ proc inLines*(node: PNode, lrange: Slice[int]): bool {.dbg.} =
   hack:
     lrange.a <= node.info.line.int and node.info.line.int <= lrange.b
 
-proc inFile*(
+func inFile*(
     conf: ConfigRef,
     node: PNode | PSym,
     file: string,
@@ -911,7 +911,7 @@ proc inFile*(
     return file in toFilename(conf, node.info) and
            node.info.line.int in lrange
 
-proc inFile*(
+func inFile*(
     node: PNode | PSym,
     file: string,
     lrange: Slice[int] = low(int) .. high(int)

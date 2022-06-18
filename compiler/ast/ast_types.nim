@@ -1126,9 +1126,13 @@ proc add*(father, son: Indexable) =
   father.sons.add(son)
 
 template `[]`*(n: Indexable, i: int): Indexable = n.sons[i]
+template `[]`*(n: Indexable, i: Slice[int]): seq[Indexable] = n.sons[i.a .. i.b]
 template `[]=`*(n: Indexable, i: int; x: Indexable) = n.sons[i] = x
 
 template `[]`*(n: Indexable, i: BackwardsIndex): Indexable = n[n.len - i.int]
+template `[]`*(n: Indexable, slice: HSlice[int, BackwardsIndex]): seq[Indexable] =
+  n[slice.a .. n.len - slice.b.int]
+
 template `[]=`*(n: Indexable, i: BackwardsIndex; x: Indexable) = n[n.len - i.int] = x
 
 const emptyReportId* = ReportId(0)

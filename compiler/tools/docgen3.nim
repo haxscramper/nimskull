@@ -835,7 +835,7 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
     else:
       result.add "[NO DB ENTRY]" + fgRed + styleReverse
 
-  implicitDebugConfRef = graph.config
+  setImplicitDebugConfRef graph.config
   implicitTReprConf.extraNodeInfo = proc(node: PNode): ColText =
     result.add "node location " & graph.config$node.info
     if node.kind in {nkIdent, nkSym}:

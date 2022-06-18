@@ -166,50 +166,7 @@ proc maybeResemArgs*(c: PContext, n: PNode, startIdx: int = 1): seq[PNode] =
 
     result.add arg
 
-proc collectMismatches(
-  c: PContext, n: PNode, errors: CandidateErrors): seq[SemCallMismatch] =
-  ## Construct list of type mismatch descriptions for subsequent reporting.
-  ## This procedure simply repacks the data from CandidateErrors into
-  ## `SemCallMismatch` - discard unnecessary data, pull important elements
-  ## into the result. No actual formatting is done here.
-  for err in errors:
-    var cand = SemCallMismatch(
-      kind: err.firstMismatch.kind,
-      expression: n,
-      arguments: maybeResemArgs(c, n, 1),
-      target: err.sym,
-      targetArg: err.firstMismatch.formal,
-      arg: err.firstMismatch.arg,
-    )
-
-    if n.len > 1:
-      case cand.kind:
-        of kUnknownNamedParam,
-           kAlreadyGiven,
-           kPositionalAlreadyGiven,
-           kExtraArg,
-           kMissingParam:
-          # Additional metadata only contains `targetArg` that is
-          # unconditionally assigned from `err.formal`
-          discard
-
-        of kTypeMismatch, kVarNeeded:
-          let nArg = n[err.firstMismatch.arg]
-          assert nArg != nil
-          assert cand.targetArg != nil
-          assert cand.targetArg.typ != nil
-          assert nArg.typ != nil
-          cand.typeMismatch = c.config.typeMismatch(
-            err.firstMismatch.formal.typ, nArg.typ)
-          cand.diag = err.diag
-
-        of kUnknown:
-          # do not break 'nim check'
-          discard
-
-    result.add cand
-
-proc notFoundError(c: PContext, n: PNode, errors: CandidateErrors): PNode =
+proc notFoundError(c: PContext, n: PNode, errors: seq[SemCallMismatch]): PNode =
   ## Gives a detailed error message; this is separated from
   ## semOverloadedCall, as semOverloadedCall is already pretty slow (and we
   ## need this information only in case of an error). returns an nkError
@@ -325,7 +282,7 @@ proc getMsgDiagnostic(
 
 proc resolveOverloads(c: PContext, n: PNode,
                       filter: TSymKinds, flags: TExprFlags,
-                      errors: var CandidateErrors): TCandidate =
+                      errors: var seq[SemCallMismatch]): TCandidate =
   addInNimDebugUtils(c.config, "resolveOverloads", n, filter, errors, result)
   ## Find best overload candidate that matches for the node `n`. Input node
   ## `n` is a full AST of the call - infix/prefix/command/call()
@@ -574,7 +531,7 @@ proc semOverloadedCall(
   ## `notFoundError`)
 
   addInNimDebugUtils(c.config, "semOverloadedCall", n, result)
-  var errors: CandidateErrors
+  var errors: seq[SemCallMismatch]
 
   var r = resolveOverloads(c, n, filter, flags, errors)
 
