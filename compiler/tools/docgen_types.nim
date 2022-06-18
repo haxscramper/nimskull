@@ -274,13 +274,16 @@ type
 
       of dttCode:
         code*: seq[DocTextTree]
-        isInline*: bool
+        isInline*: bool ## whether code block was written as inline, or
+                        ## this is a free standalone section
         lang*: string
         # interpretation*: string
-        properties*: seq[(string, string)]
+        properties*: seq[(string, string)] ## Associated code block
+                                           ## property fields
 
       of dttAdmonition:
-        adType*: string
+        adType*: string ## Admonition type - note, tip, warning and so on.
+        # TODO replace with enumeration
 
       else:
         discard

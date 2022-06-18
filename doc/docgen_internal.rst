@@ -44,6 +44,14 @@ database and converts it into HTML you see in the default documentation.
 Here we explain how to re-implement second part of this process: what do
 you need to know, how to use this knowledge and so on.
 
+Provided documentation does not expect you to use any specific language -
+aside from support for interfacing with SQLite database and parsing JSON
+there are no other prerequisites.
+
+You can, of course, take advantage of the deserialization capabilities of
+the documentation database and write your application in nim. Section
+`Nim-Specific capabilities`_ covers that.
+
 Database structure
 ------------------
 
@@ -113,3 +121,49 @@ defined in `docgen_types.nim`
    entries that had it.
    + `id` (refs `entries.id`): deprecation annotation target
    + `msg`: Deprecation message if any.
+
+This database structure was chosen to store as much information as
+possible, without sacrificing the usability. In addition to simple data
+representation it also targets a direct analysis via SQL queries.
+
+.. TODO Write example of the SQL query for processing
+
+Documentation text representation
+---------------------------------
+
+In addition to storing original documentation text, processed version is
+provided in the `docs.tree` field, which allows developers to work with
+higher-level representation even if their language does not have RST parser
+implemented. Aside from saving your time and providing a pre-parsed text,
+this field also resolves embedded links, and assigns IDs where possible
+(referencing `entries.id`).
+
+.. Another reason for this is absolutely nauseating structure of the RST
+   AST itself, that provides half a dozen ways of writing an inline code
+   block or link.
+
+.. Also, if we plan to switch from RST to the Asciidoctor, abstracted
+   representation will help here as well.
+
+JSON is generated automatically from the `docgen_types.DocTextTree`
+
+Nim-Specific capabilities
+-------------------------
+
+This section provides pointers that will make it easier to use the
+generated documentation database in nim. Although aside from support of the
+native types there are not **explicit** upsides that make it a singular
+choice for certain applications. Provided data model is designed to avoid
+that as much as possible.
+
+In order to deserialize the documentation database you need to use the
+`readSqlite` procedure from the `docgen_sqlite`. It can be called without
+complete setup of the `ConfigRef` - latter one is only used to store
+information about files (`FileIndex` and `FileInfo` are also used in other
+parts of the compiler, so they are not copied to the `DocDb` object).
+
+When deserialization completes you are left with `DocDb` object that can be
+used for documentation generation.
+
+JSON representation of the processed RST is also deserialized back into the
+`DocTextTree`.
