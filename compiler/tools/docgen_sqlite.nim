@@ -468,9 +468,16 @@ iterator typedRows[T: tuple](
 
 proc readSqlite*(conf: ConfigRef, db: var DocDb, file: AbsoluteFile) =
   var conn = open(file.string, "", "", "")
-  for row in conn.typedRows(tab.files, tuple[id: FileIndex, abs: string]):
+  for row in conn.typedRows(tab.files, tuple[
+    id: FileIndex,
+    abs: string,
+    rel: string,
+    hash: string
+  ]):
     conf.m.fileInfos.add TFileInfo(
-      fullPath: row.abs.AbsoluteFile
+      fullPath: row.abs.AbsoluteFile,
+      projPath: row.rel.RelativeFile,
+      hash: row.hash
     )
 
     doAssert row.id.int == conf.m.fileInfos.high
