@@ -746,3 +746,13 @@ proc `[]`*(node: PNode, slice: NodeSliceName): seq[PNode] =
 proc isNewStyleConcept*(n: PNode): bool {.inline.} =
   assert n.kind == nkTypeClassTy
   result = n[0].kind == nkEmpty
+
+func isUnnamedTuple*(typ: PType): bool =
+  ## Check if type is a unnamed tuple (`(A, B)`)
+  var operand = typ.skipTypes({tyGenericInst})
+  return operand.kind == tyTuple and operand.n == nil
+
+func isNamedTuple*(typ: PType): bool =
+  ## Check if type is a named tuple (`tuple[a: T]`)
+  var operand = typ.skipTypes({tyGenericInst})
+  return operand.kind == tyTuple and operand.n != nil

@@ -974,7 +974,7 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
       result = "'old' takes a parameter name"
 
     of rsemOldDoesNotBelongTo:
-      result = r.ast.sym.name.s & " does not belong to " & r.symstr
+      result = r.ast.getIdentStr() & " does not belong to " & r.symstr
 
     of rsemCannotFindPlugin:
       result = "cannot find plugin " & r.symstr
@@ -1248,7 +1248,7 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
 
     of rsemDoubleCompletionOf:
       result = "cannot complete type '" &
-        r.symbols[1].name.s &
+        r.symbols[1].getIdentStr() &
         "' twice; " &
         "previous type completion was here: " &
         (conf $ r.symbols[0].info)
@@ -1369,8 +1369,8 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
         result.addf(
           "'$1' can have side effects.\nan object reachable " &
             "from '$2' is potentially mutated",
-          part.isUnsafe.name.s,
-          part.unsafeVia.name.s
+          part.isUnsafe.getIdentStr(),
+          part.unsafeVia.getIdentStr()
         )
 
         if part.location != unknownLineInfo:
@@ -1402,31 +1402,31 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
           case part.trace:
             of ssefUsesGlobalState:
               addHint(
-                "accesses global state '$#'" % u.name.s,
-                useLineInfo, s.name.s, part.level)
+                "accesses global state '$#'" % u.getIdentStr(),
+                useLineInfo, s.getIdentStr(), part.level)
 
               addHint(
-                "accessed by '$#'" % s.name.s, u.info,
-                u.name.s, part.level + 1)
+                "accessed by '$#'" % s.getIdentStr(), u.info,
+                u.getIdentStr(), part.level + 1)
 
             of ssefCallsSideEffect:
               addHint(
-                "calls `.sideEffect` '$#'" % u.name.s,
-                useLineInfo, s.name.s, part.level)
+                "calls `.sideEffect` '$#'" % u.getIdentStr(),
+                useLineInfo, s.getIdentStr(), part.level)
 
               addHint(
-                "called by '$#'" % s.name.s,
-                u.info, u.name.s, part.level + 1)
+                "called by '$#'" % s.getIdentStr(),
+                u.info, u.getIdentStr(), part.level + 1)
 
             of ssefCallsViaHiddenIndirection:
               addHint(
                 "calls routine via hidden pointer indirection",
-                useLineInfo, s.name.s, part.level)
+                useLineInfo, s.getIdentStr(), part.level)
 
             of ssefCallsViaIndirection:
               addHint(
                 "calls routine via pointer indirection",
-                useLineInfo, s.name.s, part.level)
+                useLineInfo, s.getIdentStr(), part.level)
 
             of ssefParameterMutation:
               assert false, "Must be handled as a standalone effect"
@@ -1713,8 +1713,8 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
       let proto = r.symbols[0]
       let s = r.symbols[1]
       result = "pragmas are only allowed in the header of a proc; redefinition of $1" %
-        ("'" & proto.name.s & "' from " & conf $ proto.info &
-        " '" & s.name.s & "' from " & conf $ s.info)
+        ("'" & proto.getIdentStr() & "' from " & conf $ proto.info &
+        " '" & s.getIdentStr() & "' from " & conf $ s.info)
 
     of rsemDisjointFields:
       result = ("The fields '$1' and '$2' cannot be initialized together, " &
@@ -1776,7 +1776,7 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
       result = "invalid module name: '$1'" % r.ast.render
 
     of rsemInvalidMethodDeclarationOrder:
-      result = "invalid declaration order; cannot attach '" & r.symbols[0].name.s &
+      result = "invalid declaration order; cannot attach '" & r.symbols[0].getIdentStr() &
         "' to method defined here: " & conf$r.symbols[1].info
 
     of rsemRecursiveInclude:
@@ -1943,7 +1943,7 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
       if r.sym.isNil:
         result.addf(
           "redefinition of '$1'; previous declaration here: $2",
-          r.symbols[0].name.s,
+          r.symbols[0].getIdentStr(),
           conf.toStr(r.symbols[1].info)
         )
 
@@ -1999,7 +1999,7 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
       let path = toFilenameOption(conf, r.processing.fileIdx, conf.filenameOption)
       let indent = repeat(">", r.processing.importStackLen)
       let fromModule = r.sym
-      let fromModule2 = if fromModule != nil: $fromModule.name.s else: "(toplevel)"
+      let fromModule2 = if fromModule != nil: $fromModule.getIdentStr() else: "(toplevel)"
       let mode = if r.processing.isNimscript: "(nims) " else: ""
       result = "$#$# $#: $#: $#" % [mode, indent, fromModule2, r.processing.moduleStatus, path]
 
@@ -2300,7 +2300,7 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
       result = "found no symbol at position"
 
     of rsemOverrideSafetyMismatch:
-      result = "base method is GC-safe, but '$1' is not" % r.symbols[1].name.s
+      result = "base method is GC-safe, but '$1' is not" % r.symbols[1].getIdentStr()
 
     of rsemOverrideLockMismatch:
       result = "base method has lock level $1, but dispatcher has $2" % [
@@ -2367,7 +2367,7 @@ proc reportBody*(conf: ConfigRef, r: SemReport): string =
 
     of rsemWarnGcUnsafeListing, rsemErrGcUnsafeListing:
       let trace = r.gcUnsafeTrace
-      let (s, u) = (trace.isUnsafe.name.s, trace.unsafeVia.name.s)
+      let (s, u) = (trace.isUnsafe.getIdentStr(), trace.unsafeVia.getIdentStr())
       case trace.unsafeRelation:
         of sgcuCallsUnsafe:
           result.addf("'$#' is not GC-safe as it calls '$#'", s, u)
@@ -2567,7 +2567,7 @@ proc presentDiagnostics(conf: ConfigRef, d: SemDiagnostics, startWithNewLine: bo
       let sev = conf.severity(report)
       result.add conf.wrap(
         if sev == rsevError:
-          d.diagnosticsTarget.name.s & ": "
+          d.diagnosticsTarget.getIdentStr() & ": "
         else:
           prefixShort(conf, report)
         , reportColors[sev])
@@ -2635,7 +2635,7 @@ proc presentFailedCandidates(
 
     let nArg = err.firstMismatch.arg
 
-    let nameParam = if err.firstMismatch.formal != nil: err.firstMismatch.formal.name.s else: ""
+    let nameParam = if err.firstMismatch.formal != nil: err.firstMismatch.formal.getIdentStr() else: ""
     if n.len > 1:
       candidates.add("  first type mismatch at position: " & $err.firstMismatch.pos)
       # candidates.add "\n  reason: " & $err.firstMismatch.kind # for debugging
@@ -3334,7 +3334,7 @@ proc reportBody*(conf: ConfigRef, r: DebugReport): string =
       if not l.sym.isNil():
         result.addf(
           " for the '$#' $#\n\n",
-          l.sym.name.s,
+          l.sym.getIdentStr(),
           conf.toStr(l.sym.info))
 
       else:

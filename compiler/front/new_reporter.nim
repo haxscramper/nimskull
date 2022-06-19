@@ -268,6 +268,9 @@ proc format(target: PType, other: PType = nil): ColText =
   ## time to time, but otherwise is specifically geared towards
   ## human-readable, colored representation.
   coloredResult()
+  const
+    ctarget = fgGreen
+    cother = fgRed
 
   proc aux(target, other: PType) =
     if other.isNil:
@@ -280,10 +283,56 @@ proc format(target: PType, other: PType = nil): ColText =
       if tname == oname:
         add tname
 
+      elif (tname, oname) in [
+        ("float", "float64"),
+        ("float", "float32"),
+      ]:
+        add tname
+
+      elif target.kind == tyTuple and other.kind == tyTuple:
+        let
+          tnamed = target.isNamedTuple()
+          onamed = other.isNamedTuple()
+
+        add tern(tnamed, "tuple[", "(")
+
+        for idx in 0 ..< min(len(target), len(other)):
+          if 0 < idx: add ", "
+          let
+            tfield = tern(tnamed, target.n[idx].getIdentStr(), "")
+            ofield = tern(onamed, other.n[idx].getIdentStr(), "")
+
+          if tnamed:
+            if tfield != ofield and onamed:
+              add tfield + ctarget
+              add " != "
+              add ofield + cother
+
+            else:
+              add tfield
+
+            add ": "
+
+          aux(target[idx], other[idx])
+
+        if len(target) < len(other):
+          for sub in len(target) ..< len(other):
+            if 0 < sub: add ", "
+            if onamed: add (other.n[sub].getIdentStr() & ": ") + ctarget
+            add format(other[sub]) + ctarget
+
+        if len(other) < len(target):
+          for sub in len(other) ..< len(target):
+            if 0 < sub: add ", "
+            if tnamed: add (target.n[sub].getIdentStr() & ": ") + cother
+            add format(target[sub]) + cother
+
+        add tern(tnamed, "]", ")")
+
       else:
-        add &"{tname}" + fgGreen
+        add &"{tname}" + cother
         add " != "
-        add &"{oname}" + fgRed
+        add &"{oname}" + ctarget
 
     case target.kind:
       of tyGenericBody, tyBuiltInTypeClass:
@@ -309,7 +358,7 @@ proc formatProc(p: PSym): ColText =
   add "("
   for idx, arg in pairs(p.typ.n.sons[1 ..^ 1]):
     if idx > 0: add ", "
-    add arg.sym.name.s + fgCyan
+    add arg.getIdentStr() + fgCyan
     add ": "
     add arg.typ.format()
 
@@ -339,7 +388,7 @@ proc format(mis: RankedCallMismatch): ColText =
       add ":\n"
       add stringMismatchMessage(
         $sem.firstMismatch.arg,
-        sem.target.typ.argSyms().mapIt(it.sym.name.s)).
+        sem.target.typ.argSyms().mapIt(it.getIdentStr())).
         indent(2)
 
     of kTypeMismatch:
@@ -350,7 +399,7 @@ proc format(mis: RankedCallMismatch): ColText =
       for idx, argMis in mis.mismatches:
         if not first: add ", "
         first = false
-        add $syms[idx]
+        add $syms[idx] + fgCyan
         add ": "
         add argMis.format()
 
@@ -394,10 +443,10 @@ proc reportCallMismatch(conf: ConfigRef, r: SemReport): ColText =
 
   let name =
     if 0 < byType.len:
-      byType[0][0].target.name.s
+      byType[0][0].target.getIdentStr()
 
     else:
-      other[0].target.name.s
+      other[0].target.getIdentStr()
 
   coloredResult()
   add "Cannot call "

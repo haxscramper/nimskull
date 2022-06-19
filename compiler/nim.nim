@@ -139,7 +139,20 @@ import compiler/utils/astrepr
 
 when not defined(selftest):
   var conf = newConfigRef(cli_reporter.reportHook)
-  # implicitTReprConf = onlyStructureTReprConf
+  implicitTReprConf.incl {
+    trfShowNilFields
+  }
+
+  implicitTReprConf.excl {
+    trfShowTypeFlags,
+    trfShowSymMagic,
+    trfShowSymFlags,
+    trfShowSymTypes,
+    trfShowSymOwner,
+    trfShowNodeIds,
+    trfShowSymName,
+  }
+
   conf.writeHook =
     proc(conf: ConfigRef, msg: string, flags: MsgFlags) =
       msgs.msgWrite(conf, msg, flags)
