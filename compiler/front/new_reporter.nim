@@ -464,11 +464,23 @@ proc reportBody*(conf: ConfigRef, r: SemReport): ColText =
     of rsemUndeclaredIdentifier:
       add "undeclared identifier: '" & r.str & "' - "
       let candidates = mismatchCandidates(
-        r.str, mapIt(r.spellingCandidates, it.sym.name.s))
+        r.str, mapIt(r.spellingCandidates, it.sym.getIdentStr()))
       if 0 < candidates.len:
         add didYouMean(r.str, candidates)
       else:
         add "no matching alternatives"
+
+    of rsemInvalidOrderInEnum:
+      addf(
+        "invalid order for enum field '$#': got $#, but expected $# or more",
+        r.sym.getIdentStr() + fgGreen,
+        $r.countMismatch.got + fgCyan,
+        $r.countMismatch.expected + fgCyan
+      )
+
+    of rsemExpectedOrdinal:
+      add "ordinal type expected; given "
+      add format(r.typ)
 
     of rsemHasSideEffects:
       if r.sideEffectTrace[0].trace == ssefParameterMutation:
@@ -483,21 +495,21 @@ proc reportBody*(conf: ConfigRef, r: SemReport): ColText =
           addf(repeat(">", part.level))
           add " "
           add conf.toStr(part.location)
-          addf(" '$#' ", s.name.s + fgGreen)
+          addf(" '$#' ", s.getIdentStr() + fgGreen)
 
           case part.trace:
             of ssefUsesGlobalState:
               addf(
                 "$# '$#' ($# in $#)",
                 "accesses external" + fgYellow,
-                u.name.s + fgGreen,
+                u.getIdentStr() + fgGreen,
                 toHumanStr(u.kind),
                 conf.toStr(u.info))
 
             of ssefCallsSideEffect:
               addf(
                 "calls '$#' ($# in $#)",
-                u.name.s + fgGreen,
+                u.getIdentStr() + fgGreen,
                 toHumanStr(u.kind),
                 conf.toStr(u.info))
 
@@ -554,7 +566,7 @@ proc getContext(conf: ConfigRef, ctx: seq[ReportContext]): ColText =
     case ctx.kind:
       of sckInstantiationOf:
         add " instantiation of "
-        add ctx.entry.name.s
+        add ctx.entry.getIdentStr()
         if 0 < ctx.params.data.len:
           add "["
           var first = true

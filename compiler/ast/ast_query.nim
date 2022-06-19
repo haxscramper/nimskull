@@ -432,6 +432,9 @@ proc getStr*(a: PNode): string =
     #result = ""
 
 
+func getIdentStr*(s: PSym): string = s.name.s
+func getIdentStr*(i: PIdent): string = i.s
+
 proc getIdentStr*(n: PNode): string =
   ## Get string from identifier or symbol node. Raise recoverable error for
   ## all other node kinds
