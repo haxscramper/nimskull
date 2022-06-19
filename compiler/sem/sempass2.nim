@@ -346,15 +346,15 @@ proc listSideEffects(
     for (useLineInfo, u) in context.sideEffects[s.id]:
       if u != nil and not cycleCheck.containsOrIncl(u.id):
         var trace: SemSideEffectCallKind
-        case u.kind
-        of skLet, skVar:
-          trace = ssefUsesGlobalState
-        of routineKinds:
-          trace = ssefCallsSideEffect
-        of skParam, skForVar:
-          trace = ssefCallsViaHiddenIndirection
-        else:
-          trace = ssefCallsViaIndirection
+        case u.kind:
+          of skLet, skVar:
+            trace = ssefUsesGlobalState
+          of routineKinds:
+            trace = ssefCallsSideEffect
+          of skParam, skForVar:
+            trace = ssefCallsViaHiddenIndirection
+          else:
+            trace = ssefCallsViaIndirection
 
         result.sideEffectTrace.add((
           isUnsafe: s,

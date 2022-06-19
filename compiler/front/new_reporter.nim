@@ -456,7 +456,7 @@ proc objFields(obj: PNode): seq[PNode] =
 
 proc reportBody*(conf: ConfigRef, r: SemReport): ColText =
   coloredResult()
-  echo "Semantic report body", r.kind
+  echo "Semantic report body ", r.kind
   case r.kind:
     of rsemCallTypeMismatch:
       add reportCallMismatch(conf, r)
@@ -469,6 +469,50 @@ proc reportBody*(conf: ConfigRef, r: SemReport): ColText =
         add didYouMean(r.str, candidates)
       else:
         add "no matching alternatives"
+
+    of rsemHasSideEffects:
+      if r.sideEffectTrace[0].trace == ssefParameterMutation:
+        result.add old.reportBody(conf, r)
+
+      else:
+        result.addf("'$1' can have side effects", r.symstr)
+        for part in r.sideEffectTrace:
+          let s = part.isUnsafe
+          let u = part.unsafeVia
+          add "\n"
+          addf(repeat(">", part.level))
+          add " "
+          add conf.toStr(part.location)
+          addf(" '$#' ", s.name.s + fgGreen)
+
+          case part.trace:
+            of ssefUsesGlobalState:
+              addf(
+                "$# '$#' ($# in $#)",
+                "accesses external" + fgYellow,
+                u.name.s + fgGreen,
+                toHumanStr(u.kind),
+                conf.toStr(u.info))
+
+            of ssefCallsSideEffect:
+              addf(
+                "calls '$#' ($# in $#)",
+                u.name.s + fgGreen,
+                toHumanStr(u.kind),
+                conf.toStr(u.info))
+
+            of ssefCallsViaHiddenIndirection:
+              addf(
+                "calls routine via $#",
+                "hidden pointer indirection" + fgYellow)
+
+            of ssefCallsViaIndirection:
+              addf(
+                "calls routine via $#",
+                "pointer indirection" + fgYellow)
+
+            of ssefParameterMutation:
+              assert false, "Must be handled as a standalone effect"
 
     of rsemDuplicateCaseLabel:
       addf(
@@ -588,7 +632,8 @@ proc reportHook*(conf: ConfigRef, r: Report): TErrorHandling =
 
   elif wkind in { writeForceEnabled, writeEnabled }:
     echo conf.reportFull(r)
-    echo ""
+    if r.kind notin rdbgTracerKinds:
+      echo ""
 
   else:
     echo "?"

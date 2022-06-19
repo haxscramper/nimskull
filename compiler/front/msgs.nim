@@ -414,10 +414,11 @@ proc errorActions(
       # only really quit when we're not in the new 'nim check --def' mode:
       if conf.ideCmd == ideNone:
         return (doAbort, false)
+
     elif eh == doAbort and conf.cmd != cmdIdeTools:
       return (doAbort, false)
+
     elif eh == doRaise:
-      {.warning: "[IMPLEMENT] Convert report to string message?".}
       return (doRaise, false)
 
   return (doNothing, false)

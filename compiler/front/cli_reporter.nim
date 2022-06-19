@@ -139,7 +139,7 @@ proc toStr*(
     {styleBright})
 
 const
-  reportTitles: array[ReportSeverity, string] = [
+  reportTitles*: array[ReportSeverity, string] = [
     "Debug: ", "Hint: ", "Warning: ", "Error: ", "Fatal: ", "Trace: "
   ]
 
