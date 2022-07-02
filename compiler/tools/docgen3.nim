@@ -761,9 +761,6 @@ proc docInSemOpen(
   return semPassSetupOpen(ctx, graph, module, idgen)
 
 proc docInSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
-  if inDebug():
-    debug n
-
   result = semPassProcess(c, n)
   var ctx = DocContext(c)
   let conf = ctx.graph.config
@@ -801,10 +798,6 @@ proc docInSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
     var state = initRegisterState()
     state.user = ctx.docModule
     state.moduleId = ctx.docModule
-
-    if conf.isCompilerDebug():
-      echo conf.treeRepr(n)
-
     registerUses(db, result, state)
 
 proc docInSemClose(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =

@@ -230,9 +230,11 @@ proc getEnumSetValues*(node: PNode): IntSet =
         result.incl value
 
     of nkSym:
-      debug(node, verboseTReprConf)
-      debug(node.typ.n)
-      failNode node
+      # echo
+      result.incl node.sym.position
+      # debug(node, verboseTReprConf)
+      # debug(node.typ.n)
+      # failNode node
 
     else:
       failNode node, "unexpected input node kind"
@@ -957,14 +959,20 @@ proc reg(
         db.reg(sub, state, node)
 
     of nkCurly:
-      if node.isEnumLiteral():
-        # if inDebug():
-        echo "found enum set literal"
-        debug node
-        echo "----"
+      if inDebug():
+        echo "found curly"
+        debug(node, defaultTReprConf)
 
-        for sym in node.enumSetSymbols():
-          debug sym
+      if node.isEnumLiteral():
+        if inDebug():
+          echo "found enum set literal"
+          debug node
+          echo "----"
+
+          echo "single node: ", $node
+          for sym in node.enumSetSymbols():
+            echo "> sym"
+            debug sym
 
         for sub in node:
           db.reg(sub, state.trySet(), node)
