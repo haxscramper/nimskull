@@ -982,8 +982,8 @@ proc getOutFile*(conf: ConfigRef; filename: RelativeFile, ext: string): Absolute
   result = conf.outDir / changeFileExt(filename, ext)
 
 proc absOutFile*(conf: ConfigRef): AbsoluteFile =
-  doAssert not conf.outDir.isEmpty
-  doAssert not conf.outFile.isEmpty
+  # doAssert not conf.outDir.isEmpty
+  # doAssert not conf.outFile.isEmpty
   result = conf.outDir / conf.outFile
   when defined(posix):
     if dirExists(result.string): result.string.add ".out"

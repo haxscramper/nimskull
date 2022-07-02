@@ -121,7 +121,7 @@ type
     trfShowNodeIds ## `.id` field, available when compiler is built with `-d:nodeIds`
     trfShowNodeComments ## `.comment` field
     trfShowNodeErrors ## Embedded `nkError` reports
-    trfShowNodeTypes
+    trfShowNodeTypes ## Flat render of the node type
     trfDescFlag ## For each formatted field, show name of the flag that
                 ## controls it
 
@@ -848,7 +848,7 @@ proc setImplicitDebugConfRef*(conf: ConfigRef) {.dbg.} =
   hack:
     implicitDebugConfRef = conf
 
-func debugAst*(it: PNode) {.exportc, dbg.} =
+proc debugAst*(it: PNode) {.exportc, dbg.} =
   ## Print out tree representation of the AST node.
   ##
   ## .. note:: there is no `ConfigRef` argument, and because of that some
@@ -861,13 +861,13 @@ func debugAst*(it: PNode) {.exportc, dbg.} =
   hack:
     echo treeRepr(implicitDebugConfRef, it, implicitTReprConf)
 
-func debugType*(it: PType) {.exportc, dbg.} =
+proc debugType*(it: PType) {.exportc, dbg.} =
   ## Print out tree represntation of the type. Can also be used in gdb
   ## debugging session due to `.exportc.` annotation
   hack:
     echo treeRepr(implicitDebugConfRef, it, implicitTReprConf)
 
-func debugSym*(it: PSym) {.exportc, dbg.} =
+proc debugSym*(it: PSym) {.exportc, dbg.} =
   ## Print out tree represntation of the symbol. Can also be used in gdb
   ## debugging session due to `.exportc.` annotation
   hack:
@@ -898,7 +898,7 @@ proc inLines*(node: PNode, lrange: Slice[int]): bool {.dbg.} =
   hack:
     lrange.a <= node.info.line.int and node.info.line.int <= lrange.b
 
-func inFile*(
+proc inFile*(
     conf: ConfigRef,
     node: PNode | PSym,
     file: string,
@@ -911,7 +911,7 @@ func inFile*(
     return file in toFilename(conf, node.info) and
            node.info.line.int in lrange
 
-func inFile*(
+proc inFile*(
     node: PNode | PSym,
     file: string,
     lrange: Slice[int] = low(int) .. high(int)

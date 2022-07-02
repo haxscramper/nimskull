@@ -761,6 +761,9 @@ proc docInSemOpen(
   return semPassSetupOpen(ctx, graph, module, idgen)
 
 proc docInSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
+  if inDebug():
+    debug n
+
   result = semPassProcess(c, n)
   var ctx = DocContext(c)
   let conf = ctx.graph.config
@@ -798,6 +801,10 @@ proc docInSemProcess(c: PPassContext, n: PNode): PNode {.nimcall.} =
     var state = initRegisterState()
     state.user = ctx.docModule
     state.moduleId = ctx.docModule
+
+    if conf.isCompilerDebug():
+      echo conf.treeRepr(n)
+
     registerUses(db, result, state)
 
 proc docInSemClose(graph: ModuleGraph; p: PPassContext, n: PNode): PNode {.nimcall.} =
@@ -816,36 +823,45 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
   # Persistent data storage for all documentable entries. The data persists
   # across all open/close triggers.
   var db = DocDb()
-  implicitTReprConf.excl {
-    trfShowSymFlags, trfShowSymId, trfShowSymName, trfShowSymOwner,
-    trfShowNodeFlags, trfShowTypeOwner,
-    trfShowNodeTypes,
-    trfShowSymTypes,
-  }
+  # implicitTReprConf.excl {
+  #   trfShowSymFlags,
+  #   trfShowSymId,
+  #   trfShowSymName,
+  #   trfShowSymOwner,
+  #   trfShowNodeId
+  #   trfShowNodeFlags,
+  #   trfShowTypeOwner,
+  #   trfShowNodeTypes,
+  #   trfShowSymTypes,
+  # }
 
-  implicitTReprConf.extraSymInfo = proc(sym: PSym): ColText =
-    result.add "sym location " & graph.config$sym.info
-    result.add "\n"
-    result.add "hashdata " & hashdata(sym) & "\n"
-
-    if sym in db:
-      result.add "db entry: "
-      result.add db $ db[sym]
-
-    else:
-      result.add "[NO DB ENTRY]" + fgRed + styleReverse
+  implicitTReprConf = onlyStructureTReprConf
+  implicitTReprConf.incl { trfShowNodeLineInfo, trfPackedFields }
 
   setImplicitDebugConfRef graph.config
-  implicitTReprConf.extraNodeInfo = proc(node: PNode): ColText =
-    result.add "node location " & graph.config$node.info
-    if node.kind in {nkIdent, nkSym}:
-      if node.approxLoc() in db.locationSigmap:
-        result.add "\n"
-        result.add "APPROX MAP: " + fgGreen
-        result.add db$db.locationSigmap[node.approxLoc()]
+  if false:
+    implicitTReprConf.extraSymInfo = proc(sym: PSym): ColText =
+      result.add "sym location " & graph.config$sym.info
+      result.add "\n"
+      result.add "hashdata " & hashdata(sym) & "\n"
 
-      elif node.kind == nkSym:
-        result.add ("\nNO APPROX LOC" + fgYellow) + styleReverse
+      if sym in db:
+        result.add "db entry: "
+        result.add db $ db[sym]
+
+      else:
+        result.add "[NO DB ENTRY]" + fgRed + styleReverse
+
+    implicitTReprConf.extraNodeInfo = proc(node: PNode): ColText =
+      result.add "node location " & graph.config$node.info
+      if node.kind in {nkIdent, nkSym}:
+        if node.approxLoc() in db.locationSigmap:
+          result.add "\n"
+          result.add "APPROX MAP: " + fgGreen
+          result.add db$db.locationSigmap[node.approxLoc()]
+
+        elif node.kind == nkSym:
+          result.add ("\nNO APPROX LOC" + fgYellow) + styleReverse
 
   graph.backend = DocBackend(db: db)
 

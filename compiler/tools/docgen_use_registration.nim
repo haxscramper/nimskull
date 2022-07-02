@@ -3,14 +3,14 @@
 ## of the final database.
 
 import
-  ./docgen_types,
-  ./docgen_file_tracking,
-  ./docgen_unparser,
-  ./docgen_code_renderer,
-  ./docgen_ast_aux
+  docgen_types,
+  docgen_file_tracking,
+  docgen_unparser,
+  docgen_code_renderer,
+  docgen_ast_aux
 
 import
-  ast/[
+  compiler/ast/[
     ast,
     types,
     renderer,
@@ -18,16 +18,20 @@ import
     wordrecg,
     lineinfos
   ],
-  utils/[
+  compiler/utils/[
     astrepr
   ],
-  front/[
+  compiler/front/[
     options
+  ],
+  compiler/sem/[
+    sem
   ],
   std/[
     strutils,
     tables,
-    strformat
+    strformat,
+    intsets
   ]
 
 import std/options as std_options
@@ -134,6 +138,7 @@ type
     moduleId*: DocEntryId
     visitor: DocVisitor
     user*: DocEntryId
+    triedAsSetLiteral: bool
     hasInit: bool
     allowMacroNodes: bool ## Allow to record information about usages in
     ## code generated form macro expansions.
@@ -148,6 +153,10 @@ proc `+`(state: RegisterState, user: DocEntryId): RegisterState =
   assert not user.isNil()
   result = state
   result.user = user
+
+func trySet(state: sink RegisterState): RegisterState =
+  result = state
+  result.triedAsSetLiteral = true
 
 proc `+=`(state: var RegisterState, kind: RegisterStateKind) =
   ## Add state kind to the stack
@@ -187,6 +196,48 @@ proc isEnum*(node: PNode): bool =
     of nkEnumTy:  true
     of nkTypeDef: node[2].isEnum()
     else:         false
+
+proc getEnumType*(node: PNode): PType =
+   ## Return type of the enum expression. Can be an `of` branch, set,
+   ## range, or single literal.
+   case node.kind:
+    of nkCurly, nkRange, nkOfBranch: result = getEnumType(node[0])
+    of nkSym:   result = node.typ
+    else: result = nil
+
+proc isEnumLiteral*(node: PNode): bool =
+  ## Check if node is a enum literal: single value, set or range of values.
+  let typ = getEnumType(node)
+  return not typ.isNil() and typ.kind == tyEnum
+
+proc getEnumSetValues*(node: PNode): IntSet =
+  ## Get integer set of the enum values from the node expression. Node can
+  ## be either enum literal (set, range or single ident)
+  case node.kind:
+    of nkOfBranch:
+      for val in node[SliceBranchExpressions]:
+        result.incl getEnumSetValues(val)
+
+    of nkIntLit, nkCharLit:
+      result.incl node.intVal.int
+
+    of nkRange:
+      for value in node[0].intVal.int .. node[1].intVal.int:
+        result.incl value
+
+    else:
+      failNode node
+
+proc enumSetSymbols(node: PNode): seq[PSym] =
+  ## Get a full list of all enum field symbols tha twere used in a given
+  ## expression - both directly (as a literal in `enum1..enum4`) and
+  ## indirectly (as intermediate values in the range: `enum2`, `enum3`)
+  let typ = node.getEnumType()
+  if typ.isNil():
+    failNode node
+
+  for sym in toLiterals(getEnumSetValues(node), typ):
+    result.add sym.sym
 
 proc isAliasDecl*(node: PNode): bool =
   ## Check if node is an alias type declaration
@@ -637,8 +688,10 @@ proc reg(
       # nonstandard float and integer literals, formatting strings etc.
 
     of nkStrKinds:
-      # TODO register list of all string literals in code.
-      discard
+      discard db.occur(
+        node, dokLiteralUse, state,
+        idOverride = db.getOrNewStrLit(node.strVal)
+      )
 
     of nkIntKinds:
       if not isNil(node.typ) and
@@ -893,6 +946,22 @@ proc reg(
     of nkAccQuoted:
       for sub in node:
         db.reg(sub, state, node)
+
+    of nkCurly:
+      if node.isEnumLiteral():
+        let symbols = node.enumSetSymbols()
+        if inDebug():
+          echo "in debug>"
+          for sym in symbols:
+            debug sym
+
+        for sub in node:
+          db.reg(sub, state.trySet(), node)
+
+      else:
+        for sub in node:
+          db.reg(sub, state, node)
+
 
     else:
       var state = state

@@ -78,6 +78,11 @@ type
     ndkPackage = "package" ## System or programming language package
     ## (library). If present used as toplevel grouping element.
 
+    ndkLiteralEnum = "enumlit" ## Literal enum value. Nested under enum
+    ## field and used to represent specific usages of the enum throughout
+    ## the code, including cases where enum set/range is used.
+    ndkLiteralString = "strlit" ## Literal string value.
+
   DocProcKind* = enum
     dpkRegular = "regular" ## Regular user-defined procedure
     dpkOperator = "operator" ## Infix/prefix operator
@@ -142,6 +147,7 @@ type
     dokIncluded = "included"
 
     dokInMacroExpansion = "inExpansion"
+    dokLiteralUse = "literal"
 
 
 const
@@ -475,7 +481,11 @@ type
     ## open/close for module
     occurencies*: DocOccurStore ## Every tracked occurence
     sigmap*: Table[PSym, DocEntryId] ## Map from symbol to the documentable
-                                     ## entry ID
+    ## entry ID
+    enumValueMap*: Table[PSym, DocEntryid] ## Map from the symbol of the
+    ## enum field to a enum *value* object.
+    strLitMap*: Table[string, DocEntryId] ## Map from the enum string
+    ## literal value to the string literal value object.
     locationSigmap*: Table[ApproximateSymbolLocation, DocEntryId] ##[HACK
 
 This field maps declarations only based on the /identifier location/ - this
@@ -583,6 +593,16 @@ proc getOrNewNamed*(
   else:
     result = db.newDocEntry(kind, name)
     db.named[name] = result
+
+proc getOrNewStrLit*(db: var DocDb, lit: string): DocEntryId =
+  ## Either return or create new documentable entry for the string literal.
+  if lit in db.strLitMap:
+    result = db.strLitMap[lit]
+
+  else:
+    # String literal uses it's value as a name
+    result = db.newDocEntry(ndkLiteralString, lit)
+    db.strLitMap[lit] = result
 
 func isFromMacro*(db: DocDb, node: PNode): bool =
   ## Check if the node node was created during macro expansion

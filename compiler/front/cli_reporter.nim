@@ -327,7 +327,10 @@ proc renderAsType*(vals: IntSet, t: PType): string =
   result &= "}"
 
 proc getProcHeader(
-    conf: ConfigRef; sym: PSym; prefer: TPreferedDesc = preferName; getDeclarationPath = true): string =
+    conf: ConfigRef;
+    sym: PSym;
+    prefer: TPreferedDesc = preferName;
+    getDeclarationPath = true): string =
   ## Formats procs and types
   ## Returns for procs `owner.name(argument: signature): return`
   ## Returns for types `owner.name`
