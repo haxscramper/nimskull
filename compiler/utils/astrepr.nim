@@ -121,7 +121,8 @@ type
     trfShowNodeIds ## `.id` field, available when compiler is built with `-d:nodeIds`
     trfShowNodeComments ## `.comment` field
     trfShowNodeErrors ## Embedded `nkError` reports
-    trfShowNodeTypes ## Flat render of the node type
+    trfShowFullNodeTypes ## Show first level of the node types expansion.
+    ## NOTE: only shows the first level to avoid infinte recursion
     trfDescFlag ## For each formatted field, show name of the flag that
                 ## controls it
 

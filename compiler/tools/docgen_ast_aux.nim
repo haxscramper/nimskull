@@ -7,14 +7,16 @@ import
     astrepr
   ]
 
-proc failNode*(node: PNode) {.
+proc failNode*(node: PNode, reason: string = "") {.
     # deprecated: "Temporary hack to speed up development",
     noreturn
   .} =
 
   var conf = implicitTReprConf
   conf.maxPath = 3
+  echo "failed node >>>> ", reason
   echo treeRepr(nil, node, conf)
+  echo "failed node <<<<"
   assert false
 
 func getSName*(p: PNode): string =

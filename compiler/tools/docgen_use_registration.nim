@@ -218,6 +218,10 @@ proc getEnumSetValues*(node: PNode): IntSet =
       for val in node[SliceBranchExpressions]:
         result.incl getEnumSetValues(val)
 
+    of nkCurly:
+      for val in node:
+        result.incl getEnumSetValues(val)
+
     of nkIntLit, nkCharLit:
       result.incl node.intVal.int
 
@@ -225,8 +229,13 @@ proc getEnumSetValues*(node: PNode): IntSet =
       for value in node[0].intVal.int .. node[1].intVal.int:
         result.incl value
 
-    else:
+    of nkSym:
+      debug(node, verboseTReprConf)
+      debug(node.typ.n)
       failNode node
+
+    else:
+      failNode node, "unexpected input node kind"
 
 proc enumSetSymbols(node: PNode): seq[PSym] =
   ## Get a full list of all enum field symbols tha twere used in a given
@@ -234,7 +243,7 @@ proc enumSetSymbols(node: PNode): seq[PSym] =
   ## indirectly (as intermediate values in the range: `enum2`, `enum3`)
   let typ = node.getEnumType()
   if typ.isNil():
-    failNode node
+    failNode node, "cannot get type from expression"
 
   for sym in toLiterals(getEnumSetValues(node), typ):
     result.add sym.sym
@@ -949,11 +958,13 @@ proc reg(
 
     of nkCurly:
       if node.isEnumLiteral():
-        let symbols = node.enumSetSymbols()
-        if inDebug():
-          echo "in debug>"
-          for sym in symbols:
-            debug sym
+        # if inDebug():
+        echo "found enum set literal"
+        debug node
+        echo "----"
+
+        for sym in node.enumSetSymbols():
+          debug sym
 
         for sub in node:
           db.reg(sub, state.trySet(), node)
