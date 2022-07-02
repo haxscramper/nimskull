@@ -685,6 +685,18 @@ type
     # end: suggestion/code completion; lifetime unsure
     # -------------------------------------------------------------------------
 
+    expandHooks*: tuple[
+      preMacro,
+      postMacro,
+      preTemplate,
+      postTemplate: proc(context: PContext, expr: PNode, sym: PSym)
+    ] ## Optional hooks to call before/after macro/template expansion is
+      ## called. Necessary for user-provided extensions for the macro
+      ## expansion logging. Post-expand hooks are called after
+      ## `semAfterMacroCall` is called, so supplied AST should be correctly
+      ## analyzed, and all repeated macro expansion inside of the body
+      ## happen in the nested manner.
+
 template config*(c: PContext): ConfigRef = c.graph.config
 
 func isfirstTopLevelStmt*(c: PContext): bool =
@@ -827,8 +839,21 @@ proc popOptionEntry*(c: PContext) =
   c.features = c.optionStack[^1].features
   c.optionStack.setLen(c.optionStack.len - 1)
 
-proc newContext*(graph: ModuleGraph; module: PSym): PContext =
-  new(result)
+proc newContext*(
+    graph: ModuleGraph;
+    module: PSym,
+    startContext: PContext = nil
+  ): PContext =
+  ## Create new semantic pass context object, or reuse given `startContext`
+  ## - latter one is necessary if additional processing must be done during
+  ## semantic processing.
+
+  if startContext.isNil:
+    new(result)
+
+  else:
+    result = startContext
+
   result.optionStack = @[newOptionEntry(graph.config)]
   result.libs = @[]
   result.module = module
