@@ -201,9 +201,17 @@ proc getEnumType*(node: PNode): PType =
    ## Return type of the enum expression. Can be an `of` branch, set,
    ## range, or single literal.
    case node.kind:
-    of nkCurly, nkRange, nkOfBranch: result = getEnumType(node[0])
-    of nkSym:   result = node.typ
-    else: result = nil
+    of nkOfBranch, nkRange: result = getEnumType(node[0])
+    of nkSym, nkIntLit:     result = node.typ
+    of nkCurly:
+      if node.typ.isNil():
+        result = nil
+
+      else:
+        result = node.typ.skipTypes({tySet})
+
+    else:
+      result = nil
 
 proc isEnumLiteral*(node: PNode): bool =
   ## Check if node is a enum literal: single value, set or range of values.
@@ -212,7 +220,8 @@ proc isEnumLiteral*(node: PNode): bool =
 
 proc getEnumSetValues*(node: PNode): IntSet =
   ## Get integer set of the enum values from the node expression. Node can
-  ## be either enum literal (set, range or single ident)
+  ## be either enum literal (set, range or single ident) or case statement
+  ## branch
   case node.kind:
     of nkOfBranch:
       for val in node[SliceBranchExpressions]:
@@ -226,15 +235,17 @@ proc getEnumSetValues*(node: PNode): IntSet =
       result.incl node.intVal.int
 
     of nkRange:
+      let typ = getEnumType(node)
+      var tmp = IntSet()
       for value in node[0].intVal.int .. node[1].intVal.int:
-        result.incl value
+        tmp.incl value
+
+      for item in typ.n:
+        if item.sym.position in tmp:
+          result.incl item.sym.position
 
     of nkSym:
-      # echo
       result.incl node.sym.position
-      # debug(node, verboseTReprConf)
-      # debug(node.typ.n)
-      # failNode node
 
     else:
       failNode node, "unexpected input node kind"
@@ -959,19 +970,9 @@ proc reg(
         db.reg(sub, state, node)
 
     of nkCurly:
-      if inDebug():
-        echo "found curly"
-        debug(node, defaultTReprConf)
-
       if node.isEnumLiteral():
         if inDebug():
-          echo "found enum set literal"
-          debug node
-          echo "----"
-
-          echo "single node: ", $node
           for sym in node.enumSetSymbols():
-            echo "> sym"
             debug sym
 
         for sub in node:

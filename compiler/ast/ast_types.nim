@@ -928,15 +928,20 @@ type
                        # the `optStyleCheck` could've been a global option
                        # it makes it even more weird)
     position*: int            ## used for many different things:
-                              ## for enum fields its position;
-                              ## for fields its offset
-                              ## for parameters its position (starting with 0)
-                              ## for a conditional:
-                              ## 1 iff the symbol is defined, else 0
-                              ## (or not in symbol table)
-                              ## for modules, an unique index corresponding
-                              ## to the module's fileIdx
-                              ## for variables a slot index for the evaluator
+    ## for enum fields its value.
+    ## for fields its offset
+    ## for parameters its position (starting with 0)
+    ## for a conditional:
+    ## 1 iff the symbol is defined, else 0
+    ## (or not in symbol table)
+    ## for modules, an unique index corresponding
+    ## to the module's fileIdx
+    ## for variables a slot index for the evaluator
+    ##
+    ## Values of the enum symbol can be retrieved using `.position`,
+    ## including cases with value override
+    ##
+
     offset*: int              ## offset of record field
     loc*: TLoc
     annex*: PLib              ## additional fields (seldom used, so we use a

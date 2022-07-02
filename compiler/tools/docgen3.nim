@@ -829,7 +829,8 @@ proc setupDocPasses(graph: ModuleGraph): DocDb =
   # }
 
   implicitTReprConf = onlyStructureTReprConf
-  implicitTReprConf.incl { trfShowNodeLineInfo, trfPackedFields }
+  implicitTReprConf.incl {
+    trfShowNodeLineInfo, trfPackedFields, trfShowSymPosition }
 
   setImplicitDebugConfRef graph.config
   if false:
