@@ -83,23 +83,6 @@ var
   useMegatest = true
   optFailing = false
 
-type
-  TOutReport = object
-    inline: Option[InlineError]
-    node: SexpNode
-    file: string
-
-  TOutCompare = ref object
-    ## Result of comparing two data outputs for a given spec
-    match: bool
-    expectedReports: seq[TOutReport]
-    givenReports: seq[TOutReport]
-    sortedMapping: seq[tuple[pair: (int, int), cost: int]]
-    diffMap: Table[(int, int), seq[SexpMismatch]]
-    ignoredExpected: seq[int]
-    ignoredGiven: seq[int]
-    cantIgnoreGiven: bool
-
 proc diffStrings*(a, b: string): tuple[output: string, same: bool] =
   let a = a.split("\n")
   let b = b.split("\n")
@@ -221,6 +204,221 @@ type
     duration: Option[float]
       ## allows newer code pass duration to legacy code
     debugInfo: string
+
+
+# TODO: fix these files
+const disabledFilesDefault = @[
+  "tableimpl.nim",
+  "setimpl.nim",
+  "hashcommon.nim",
+
+  # Requires compiling with '--threads:on'
+  "sharedlist.nim",
+  # Error: undeclared identifier: 'hasThreadSupport'
+  "ioselectors_epoll.nim",
+  "ioselectors_kqueue.nim",
+  "ioselectors_poll.nim",
+
+  # Error: undeclared identifier: 'Timeval'
+  "ioselectors_select.nim",
+]
+
+const
+  # array of modules disabled from compilation test of stdlib.
+  disabledFiles = disabledFilesDefault
+
+type
+  TestId = int         # xxx: make this a distinct
+  RunId = int          ## test run's id/index # xxx: make this a distinct
+  EntryId = int        ## matrix entry index # xxx: make this a distinct
+  ActionId = int       ## a test action's id # xxx: make this a distinct
+  CategoryId = int     ## a category's id # xxx: make this a distinct
+  TestTarget = TTarget # xxx: renamed because I dislike the TXxx convention
+
+  Categories = seq[Category]
+
+  GlobPattern = string
+
+  TestFilterKind {.pure.} = enum
+    tfkAll,        ## all tests
+    tfkCategories, ## one or more categories
+    tfkGlob,       ## glob file pattern
+    tfkSingle      ## single test
+
+  TestFilter = object
+    restOfCmdLine: string
+    case kind: TestFilterKind
+    of tfkAll:
+      discard
+    of tfkCategories:
+      # xxx: currently multiple categories are unsupported
+      cats: Categories
+    of tfkGlob:
+      pattern: GlobPattern
+    of tfkSingle:
+      test: string
+
+  ExecutionFlag = enum
+    outputColour,      ## colour the output
+    outputResults,     ## print results to the console
+    outputFailureOnly, ## only output failures
+    outputVerbose,     ## increase output verbosity
+    logBackend         ## enable backend logging
+    dryRun,            ## do not run the tests, only indicate which would run
+    rerunFailed,       ## only run tests failed in the previous run
+    runKnownIssues     ## also execute tests marked as known issues
+
+  ExecutionFlags = set[ExecutionFlag]
+    ## track the option flags that got set for an execution
+
+  RetryInfo = object
+    test: TestId       ## which test failed
+    target: TestTarget ## the specific target
+
+  RetryList = OrderedTable[TestId, RetryInfo]
+      ## record failures in here so the user can choose to retry them
+
+  DebugInfo = OrderedTable[RunId, string]
+  # Refactor - debug info should be per action instead of per run
+
+  TestTargets = set[TestTarget]
+
+  # Category is in specs.nim
+
+  TestFile = object
+    file: string
+    catId: CategoryId
+
+  # TSpec is in specs.nim
+  # TSpec is the the spec in a single test file, but we run (`TestRun`) a test
+  # for every target and matrix entry, which itself is a number of actions and
+  # checks.
+
+  TestRun* = object
+    testId: TestId           ## test id for which this belongs
+    target: TestTarget       ## which target to run for
+    test: TTest
+    debugInfo: string
+    matrixEntry: EntryId     ## which item from the matrix was used
+    startTime: float
+    expected: TSpec
+
+  # xxx: add 'check' to remove `cmd: "nim check"...` from tests
+  # TestActionKind = enum
+  #   testActionSkip           ## skip this test; check the spec for why
+  #   testActionReject,        ## reject the compilation
+  #   testActionCompile,       ## compile some source
+  #   testActionRun            ## run the compiled program
+
+  TestAction = object
+    runId: RunId
+    case kind: TTestAction      # xxx: might not need `partOfRun` at all
+    of actionReject:
+      discard
+    of actionRun:
+      compileActionId: ActionId ## id of the preceeding compile action
+    of actionCompile:
+      partOfRun: bool
+
+  RunTime = object
+    ## time tracking for test run activities
+    compileStart: float      ## when the compile process start
+    compileEnd: float        ## when the compile process ends
+    compileCheckStart: float ## when compile output check started
+    compileCheckEnd: float   ## when compile output check finished
+    runStart: float          ## for run, start of execution
+    runEnd: float            ## for run, end of execution
+    runCheckStart: float     ## start of run output check
+    runCheckEnd: float       ## end of run output check
+
+  RunActual = object
+    ## actual data for a run
+    nimout: string           ## nimout from compile, empty if not required
+    nimExit: int             ## exit code produced by the compiler
+    nimMsg: string           ## last message, if any, from the compiler
+    nimFile: string          ## filename from last compiler message, if present
+    nimLine: int             ## line from last compiler message, if present
+    nimColumn: int           ## colunn from last compiler message, if present
+    prgOut: string           ## program output, if any
+    prgOutSorted: string     ## sorted version of `prgOut`; kept for legacy
+                             ## reason, remove when no longer necessary
+    prgExit: int             ## program exit, if any
+    lastAction: ActionId     ## last action in this run
+    runResult: TResultEnum   ## current result, invalid if `lastAction` unset
+
+  RunActuals = seq[RunActual]
+
+  TestOptionData = object
+    optMatrix: seq[string]   ## matrix of cli options for this test
+    action: Option[TTestAction] ## possible action override
+
+  TestOptions = OrderedTable[TestId, TestOptionData]
+    ## for legacy reasons (eg: `dllTests`) we need to be able to set per test
+    ## options, ideally this would be done with `matrix`, but it's not
+    ## sophisticated enough to support spare configuration like this needs
+
+  Execution = object
+    # user and execution inputs
+    filter: TestFilter       ## filter that was configured
+    flags: ExecutionFlags    ## various options set by the user
+    skipsFile: string        ## test files to skip loaded from `--skipFrom`
+    targets: TestTargets     ## specified targets or `noTargetsSpecified`
+    workingDir: string       ## working directory to begin execution in
+    nodeJs: string           ## path to nodejs binary
+    nimSpecified: bool       ## whether the user specified the nim
+    testArgs: string         ## arguments passed to tests by the user
+    isCompilerRepo: bool     ## whether this is the compiler repository, used
+                             ## to legacy to handle `AdditionalCategories`
+
+    # environment input / setup
+    compilerPath: string     ## compiler command to use
+    testsDir: string         ## where to look for tests
+
+    # test discovery data
+    categories: Categories   ## categories discovered for this execution
+                             ## first one is a default empty category `""`
+    testFiles: seq[TestFile] ## files for this execution
+    testSpecs: seq[TSpec]    ## spec for each file
+    testOpts:  TestOptions   ## per test options, because legacy category magic
+
+    # test execution data
+    testRuns: seq[TestRun]   ## a test run: reject, compile, or compile + run
+                             ## along with time to check; runs for a test must
+                             ## be contiguous and ordered
+    runTimes: seq[RunTime]   ## run timing information for each test run
+    runActuals: RunActuals   ## actual information for a given run
+    debugInfo: DebugInfo     ## debug info related to runs for tests, should be
+                             ## per action instead of per run.
+    runProgress: RunProgress ## current run progress based on action progress
+
+    actions: seq[TestAction] ## test actions for each run, phases of a run;
+                             ## actions for a run must be continugous and
+                             ## ordered
+
+    # test execution related data
+    retryList: RetryList     ## list of failures to potentially retry later
+
+    # legacy compat stuff -- try to remove
+    legacyTestResults: TResults  ## Legacy compatability for result reporting
+                                 ## kept to limit refactor work to running
+                                 ## tests and not include reporting.
+    legacyTestData: seq[string]  ## `TResults` had a `data` field of type
+                                 ## `string` where we appended a message per
+                                 ## test... which seems horribly wasteful.
+                                 ## keep it around until we know we can kill it
+
+  RunProgress = object
+    ## Acts as a tracker for a producer/consumer model, where `lastCheckedRun`
+    ## is where the consumer left off, and `mostRecentRun` is where the
+    ## producer left off.
+    lastCheckedRun: RunId ## run last reviewed for reporting/consumption
+    mostRecentRun: RunId  ## run that completed most recently/production
+
+  ParseCliResult = enum
+    parseSuccess       ## successfully parsed cli params
+    parseQuitWithUsage ## parsing failed, quit with usage message
+
+
 
 # ----------------------------------------------------------------------------
 
@@ -417,17 +615,25 @@ proc printableName(test: TTest, target: TTarget, allowFailure: bool): string =
   return name
 
 
-type
-  ReportParams = object
-    ## Contains additional data about report execution state.
-    name: string
-    duration: float
-    outCompare: TOutCompare
-    expected, given: string
-    success: TResultEnum
+# type
+#   ReportParams = object
+#     ## Contains additional data about report execution state.
+#     name: string
+#     duration: float
+#     outCompare: TOutCompare
+#     expected, given: string
+#     success: TResultEnum
+
+
+#     debugInfo: string # HACK was added to fix compilation error after
+#     # rebase, not sure if this is necessary or just missing due to merge
+#     # conflict errors.
+#     inCurrentBatch: bool # HACK WTF ???
+#     origName: string
+#     cat: string
+
 
 proc logToConsole(
-    test: TTest,
     param: ReportParams,
     givenSpec: ptr TSpec = nil
   ) =
@@ -509,44 +715,34 @@ proc logToBackend(param: ReportParams) =
 proc addResult(r: var TResults, param: ReportParams, givenSpec: ptr TSpec) =
   ## Report results to backend, end user (write to command-line) and so on.
   
-  # instead of `ptr tspec` we could also use `option[tspec]`; passing
-  # `givenspec` makes it easier to get what we need instead of having to
-  # pass individual fields, or abusing existing ones like expected vs
-  # given. test.name is easier to find than test.name.extractfilename a bit
-  # hacky but simple and works with tests/testament/tshould_not_work.nim
+  # REFACTOR instead of `ptr tspec` we could also use `option[tspec]`;
+  # passing `givenspec` makes it easier to get what we need instead of
+  # having to pass individual fields, or abusing existing ones like
+  # expected vs given. test.name is easier to find than
+  # test.name.extractfilename a bit hacky but simple and works with
+  # tests/testament/tshould_not_work.nim
 
   # Compute test duration, final success status, prepare formatting variables
-  var param: ReportParams
-
-  param.name = test.printableName(target, allowFailure)
-  param.duration =
-    if test.duration.isSome:
-      test.duration.get
-    else:
-      epochTime() - test.startTime
-  param.outCompare = outCompare
-  param.expected = expected
-  param.given = given
-  param.success =
-    if test.spec.timeout > 0.0 and param.duration > test.spec.timeout:
-      reTimeout
-    else:
-      successOrig
-
-  if backendLogging:
-    backend.writeTestResult(name = param.name,
-                            category = test.cat.string,
-                            target = $target,
-                            action = $test.spec.action,
-                            result = $param.success,
-                            expected = expected,
-                            given = given)
-
+  logToBackend(param)
   # TODO DOC what is this
-  r.data.addf("$#\t$#\t$#\t$#", param.name, expected, given, $param.success)
+  r.data.addf(
+    "$#\t$#\t$#\t$#", param.name, param.expected,
+    param.given, $param.success)
 
   # Write to console
   logToConsole(param, givenSpec)
+
+
+proc getName(run: TestRun): string =
+  result = run.test.name.replace(DirSep, '/')
+  result.add ' ' & $run.target
+  if run.test.options.len > 0:
+    result.add ' ' & run.test.options
+
+proc getName(test: TTest): string =
+  result = test.name.replace(DirSep, '/')
+  if test.options.len > 0:
+    result.add ' ' & test.options
 
 proc addResult(
     r: var TResults,
@@ -743,8 +939,8 @@ proc cmpMsgs(r: var TResults, run: TestRun, given: TSpec) =
 
   # If structural comparison is requested - drop directly to it and handle
   # the success/failure modes in the branch
-  if expected.nimoutSexp:
-    let outCompare = test.sexpCheck(expected, given)
+  if run.expected.nimoutSexp:
+    let outCompare = run.test.sexpCheck(run.expected, given)
     # Full match of the output results.
     if outCompare.match:
       r.addResult(run, run.expected.msg, given.msg, reSuccess)
@@ -1153,214 +1349,6 @@ proc makeTestWithDummySpec(test, options: string, cat: Category): TTest =
   spec.targets = cat.defaultTargets()
   
   initTest(test, options, cat, spec)
-
-# TODO: fix these files
-const disabledFilesDefault = @[
-  "tableimpl.nim",
-  "setimpl.nim",
-  "hashcommon.nim",
-
-  # Requires compiling with '--threads:on'
-  "sharedlist.nim",
-  # Error: undeclared identifier: 'hasThreadSupport'
-  "ioselectors_epoll.nim",
-  "ioselectors_kqueue.nim",
-  "ioselectors_poll.nim",
-
-  # Error: undeclared identifier: 'Timeval'
-  "ioselectors_select.nim",
-]
-
-const
-  # array of modules disabled from compilation test of stdlib.
-  disabledFiles = disabledFilesDefault
-
-type  
-  TestId = int         # xxx: make this a distinct
-  RunId = int          ## test run's id/index # xxx: make this a distinct
-  EntryId = int        ## matrix entry index # xxx: make this a distinct
-  ActionId = int       ## a test action's id # xxx: make this a distinct
-  CategoryId = int     ## a category's id # xxx: make this a distinct
-  TestTarget = TTarget # xxx: renamed because I dislike the TXxx convention
-
-  Categories = seq[Category]
-
-  GlobPattern = string
-
-  TestFilterKind {.pure.} = enum
-    tfkAll,        ## all tests
-    tfkCategories, ## one or more categories
-    tfkGlob,       ## glob file pattern
-    tfkSingle      ## single test
-
-  TestFilter = object
-    restOfCmdLine: string
-    case kind: TestFilterKind
-    of tfkAll:
-      discard
-    of tfkCategories:
-      # xxx: currently multiple categories are unsupported
-      cats: Categories
-    of tfkGlob:
-      pattern: GlobPattern
-    of tfkSingle:
-      test: string
-
-  ExecutionFlag = enum
-    outputColour,      ## colour the output
-    outputResults,     ## print results to the console
-    outputFailureOnly, ## only output failures
-    outputVerbose,     ## increase output verbosity
-    logBackend         ## enable backend logging
-    dryRun,            ## do not run the tests, only indicate which would run
-    rerunFailed,       ## only run tests failed in the previous run
-    runKnownIssues     ## also execute tests marked as known issues
-
-  ExecutionFlags = set[ExecutionFlag]
-    ## track the option flags that got set for an execution
-
-  RetryInfo = object
-    test: TestId       ## which test failed
-    target: TestTarget ## the specific target
-
-  RetryList = OrderedTable[TestId, RetryInfo]
-      ## record failures in here so the user can choose to retry them
-
-  DebugInfo = OrderedTable[RunId, string]
-  # Refactor - debug info should be per action instead of per run
-
-  TestTargets = set[TestTarget]
-  
-  # Category is in specs.nim
-
-  TestFile = object
-    file: string
-    catId: CategoryId
-
-  # TSpec is in specs.nim
-  # TSpec is the the spec in a single test file, but we run (`TestRun`) a test
-  # for every target and matrix entry, which itself is a number of actions and
-  # checks.
-
-  TestRun = object
-    testId: TestId           ## test id for which this belongs
-    target: TestTarget       ## which target to run for
-    matrixEntry: EntryId     ## which item from the matrix was used
-
-  # xxx: add 'check' to remove `cmd: "nim check"...` from tests
-  # TestActionKind = enum
-  #   testActionSkip           ## skip this test; check the spec for why
-  #   testActionReject,        ## reject the compilation
-  #   testActionCompile,       ## compile some source
-  #   testActionRun            ## run the compiled program
-
-  TestAction = object
-    runId: RunId
-    case kind: TTestAction      # xxx: might not need `partOfRun` at all
-    of actionReject:
-      discard
-    of actionRun:
-      compileActionId: ActionId ## id of the preceeding compile action
-    of actionCompile:
-      partOfRun: bool
-
-  RunTime = object
-    ## time tracking for test run activities
-    compileStart: float      ## when the compile process start
-    compileEnd: float        ## when the compile process ends
-    compileCheckStart: float ## when compile output check started
-    compileCheckEnd: float   ## when compile output check finished
-    runStart: float          ## for run, start of execution
-    runEnd: float            ## for run, end of execution
-    runCheckStart: float     ## start of run output check
-    runCheckEnd: float       ## end of run output check
-
-  RunActual = object
-    ## actual data for a run
-    nimout: string           ## nimout from compile, empty if not required
-    nimExit: int             ## exit code produced by the compiler
-    nimMsg: string           ## last message, if any, from the compiler
-    nimFile: string          ## filename from last compiler message, if present
-    nimLine: int             ## line from last compiler message, if present
-    nimColumn: int           ## colunn from last compiler message, if present
-    prgOut: string           ## program output, if any
-    prgOutSorted: string     ## sorted version of `prgOut`; kept for legacy
-                             ## reason, remove when no longer necessary
-    prgExit: int             ## program exit, if any
-    lastAction: ActionId     ## last action in this run
-    runResult: TResultEnum   ## current result, invalid if `lastAction` unset
-
-  RunActuals = seq[RunActual]
-
-  TestOptionData = object
-    optMatrix: seq[string]   ## matrix of cli options for this test
-    action: Option[TTestAction] ## possible action override
-
-  TestOptions = OrderedTable[TestId, TestOptionData]
-    ## for legacy reasons (eg: `dllTests`) we need to be able to set per test
-    ## options, ideally this would be done with `matrix`, but it's not
-    ## sophisticated enough to support spare configuration like this needs
-
-  Execution = object
-    # user and execution inputs
-    filter: TestFilter       ## filter that was configured
-    flags: ExecutionFlags    ## various options set by the user
-    skipsFile: string        ## test files to skip loaded from `--skipFrom`
-    targets: TestTargets     ## specified targets or `noTargetsSpecified`
-    workingDir: string       ## working directory to begin execution in
-    nodeJs: string           ## path to nodejs binary
-    nimSpecified: bool       ## whether the user specified the nim
-    testArgs: string         ## arguments passed to tests by the user
-    isCompilerRepo: bool     ## whether this is the compiler repository, used
-                             ## to legacy to handle `AdditionalCategories`
-
-    # environment input / setup
-    compilerPath: string     ## compiler command to use
-    testsDir: string         ## where to look for tests
-
-    # test discovery data
-    categories: Categories   ## categories discovered for this execution
-                             ## first one is a default empty category `""`
-    testFiles: seq[TestFile] ## files for this execution
-    testSpecs: seq[TSpec]    ## spec for each file
-    testOpts:  TestOptions   ## per test options, because legacy category magic
-
-    # test execution data
-    testRuns: seq[TestRun]   ## a test run: reject, compile, or compile + run
-                             ## along with time to check; runs for a test must
-                             ## be contiguous and ordered
-    runTimes: seq[RunTime]   ## run timing information for each test run
-    runActuals: RunActuals   ## actual information for a given run
-    debugInfo: DebugInfo     ## debug info related to runs for tests, should be
-                             ## per action instead of per run.
-    runProgress: RunProgress ## current run progress based on action progress
-
-    actions: seq[TestAction] ## test actions for each run, phases of a run;
-                             ## actions for a run must be continugous and
-                             ## ordered
-
-    # test execution related data
-    retryList: RetryList     ## list of failures to potentially retry later
-
-    # legacy compat stuff -- try to remove
-    legacyTestResults: TResults  ## Legacy compatability for result reporting
-                                 ## kept to limit refactor work to running
-                                 ## tests and not include reporting.
-    legacyTestData: seq[string]  ## `TResults` had a `data` field of type
-                                 ## `string` where we appended a message per
-                                 ## test... which seems horribly wasteful.
-                                 ## keep it around until we know we can kill it
-
-  RunProgress = object
-    ## Acts as a tracker for a producer/consumer model, where `lastCheckedRun`
-    ## is where the consumer left off, and `mostRecentRun` is where the
-    ## producer left off.
-    lastCheckedRun: RunId ## run last reviewed for reporting/consumption
-    mostRecentRun: RunId  ## run that completed most recently/production
-
-  ParseCliResult = enum
-    parseSuccess       ## successfully parsed cli params
-    parseQuitWithUsage ## parsing failed, quit with usage message
 
 include categories
 
