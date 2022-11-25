@@ -38,6 +38,16 @@ proc isTestFile*(file: string): bool =
   let (_, name, ext) = splitFile(file)
   result = ext == ".nim" and name.startsWith("t")
 
+func defaultTargets(category: Category): set[TTarget] =
+  const standardTargets = {low(TTarget)..high(TTarget)} - {targetObjC}
+  case category.string
+  of "arc":
+    standardTargets - {targetJs}
+  of "js":
+    {targetJs}
+  else:
+    standardTargets
+
 # --------------------- DLL generation tests ----------------------------------
 
 proc runBasicDLLTest(c, r: var TResults, cat: Category, options: string) =
@@ -144,6 +154,65 @@ proc gcTests(r: var TResults, cat: Category, options: string) =
   test "cyclecollector"
   testWithoutBoehm "trace_globals"
 
+type
+  GcTestKinds = enum
+    gcOther,
+    gcMarkSweep,
+    gcBoehm
+
+proc setupGcTests(execState: var Execution, catId: CategoryId) =
+  ## setup tests for the gc category, requires special handling due to
+  ## testament limitations.
+
+  const
+    withoutMs = {gcOther}
+    withoutBoehm = {gcOther, gcMarkSweep}
+    noConditions = {gcOther, gcMarkSweep, gcBoehm}
+
+  let testData = [
+    ("foreign_thr.nim", withoutBoehm),
+    ("gcemscripten.nim", noConditions),
+    ("growobjcrash.nim", noConditions),
+    ("gcbench.nim", noConditions),
+    ("gcleak.nim", noConditions),
+    ("gcleak2.nim", noConditions),
+    ("gctest.nim", withoutBoehm),
+    ("gcleak3.nim", noConditions),
+    ("gcleak4.nim", noConditions),
+    ("weakrefs.nim", withoutBoehm),
+    ("cycleleak.nim", noConditions),
+    ("closureleak.nim", withoutBoehm),
+    ("refarrayleak.nim", withoutMs),
+    ("tlists.nim", withoutBoehm),
+    ("thavlak.nim", withoutBoehm),
+    ("stackrefleak.nim", noConditions),
+    ("cyclecollector.nim", noConditions),
+    ("trace_globals.nim", withoutBoehm)
+  ]
+
+  for (testFile, gcConditions) in testData:
+    let testId: TestId = execState.testFiles.len
+    execState.testFiles.add TestFile(file: "tests/gc" / testFile, catId: catId)
+    execState.testOpts[testId] = TestOptionData()
+
+    if gcMarkSweep in gcConditions:
+      execState.testOpts[testId].optMatrix.add "" # run the test as is
+      execState.testOpts[testId].optMatrix.add " -d:release --gc:useRealtimeGC"
+      if testFile != "gctest":
+        execState.testOpts[testId].optMatrix.add " --gc:orc"
+        execState.testOpts[testId].optMatrix.add " -d:release --gc:orc"
+
+    if gcMarkSweep in gcConditions:
+      execState.testOpts[testId].optMatrix.add " --gc:markAndSweep"
+      execState.testOpts[testId].optMatrix.add " -d:release --gc:markAndSweep"
+
+    if gcBoehm in gcConditions:
+      when not defined(windows) and not defined(android):
+        # cannot find any boehm.dll on the net, right now, so disabled for
+        # windows:
+        execState.testOpts[testId].optMatrix.add " --gc:boehm"
+        execState.testOpts[testId].optMatrix.add " -d:release --gc:boehm"
+
 # ------------------------- threading tests -----------------------------------
 
 proc threadTests(r: var TResults, cat: Category, options: string) =
@@ -153,6 +222,13 @@ proc threadTests(r: var TResults, cat: Category, options: string) =
     testSpec r, makeTest(filename, options & " --tlsEmulation:on", cat)
   for t in os.walkFiles("tests/threads/t*.nim"):
     test(t)
+
+proc setupThreadTests(execState: var Execution, catId: CategoryId) =
+  for t in os.walkFiles("tests/threads/t*.nim"):
+    let testId: TestId = execState.testFiles.len
+    execState.testFiles.add TestFile(file: t, catId: catId)
+    execState.testOpts[testId] = TestOptionData(
+      optMatrix: @["", "-d:release", "--tlsEmulation:on"])
 
 # ------------------------- debugger tests ------------------------------------
 
@@ -214,31 +290,6 @@ proc manyLoc(r: var TResults, cat: Category, options: string) =
         test.spec.action = actionCompile
         testSpec r, test
 
-
-const stdlibToExcludeFromJS = [
-  "lib/pure/browsers.nim",
-  "lib/pure/cgi.nim",
-  "lib/pure/concurrency/cpuinfo.nim",
-  "lib/pure/concurrency/threadpool.nim",
-  "lib/pure/distros.nim",
-  "lib/pure/dynlib.nim",
-  "lib/pure/encodings.nim",
-  "lib/pure/endians.nim",
-  "lib/pure/httpclient.nim",
-  "lib/pure/marshal.nim",
-  "lib/pure/md5.nim",
-  "lib/pure/memfiles.nim",
-  "lib/pure/nativesockets.nim",
-  "lib/pure/net.nim",
-  "lib/pure/nimprof.nim",
-  "lib/pure/oids.nim",
-  "lib/pure/osproc.nim",
-  "lib/pure/selectors.nim",
-  "lib/pure/smtp.nim",
-  "lib/pure/ssl_certs.nim",
-  "lib/pure/terminal.nim",
-] ## these can't run on the JS target
-
 proc testStdlib(r: var TResults, pattern, options: string, cat: Category) =
   var files: seq[string]
 
@@ -271,68 +322,30 @@ proc testStdlib(r: var TResults, pattern, options: string, cat: Category) =
     
     testSpec r, testObj
 
-# ---------------- IC tests ---------------------------------------------
+proc setupStdlibTests(execState: var Execution, catId: CategoryId) =
+  proc isValid(file: string): bool =
+    for dir in parentDirs(file, inclusive = false):
+      if dir.lastPathPart in ["includes", "nimcache"]:
+        # e.g.: lib/pure/includes/osenv.nim gives: Error: This is an include file for os.nim!
+        return false
+    let name = extractFilename(file)
+    if name.splitFile.ext != ".nim": return false
+    for namei in disabledFiles:
+      # because of `LockFreeHash.nim` which has case
+      if namei.cmpPaths(name) == 0: return false
+    return true
 
-proc icTests(r: var TResults; testsDir: string, cat: Category, options: string;
-             isNavigatorTest: bool) =
-  const
-    tooltests = ["compiler/nim.nim"]
-    incrementalOn = " --incremental:on -d:nimIcIntegrityChecks "
-    navTestConfig = " --ic:on -d:nimIcNavigatorTests --hint:Conf:off --warnings:off "
-  
-  let targets =
-    if isNavigatorTest:
-      {nativeTarget()}
-    else:
-      cat.defaultTargets()
-
-  template editedTest(x: untyped) =
-    var test = makeTest(file, x & options, cat)
-    if isNavigatorTest:
-      test.spec.action = actionCompile
-    test.spec.targets = targets
-    testSpecWithNimcache(r, test, nimcache)
-
-  template checkTest() =
-    var test = makeTestWithDummySpec(file, options, cat)
-    test.spec.cmd = compilerPrefix & " check --hint:Conf:off --warnings:off --ic:on $options " & file
-    testSpecWithNimcache(r, test, nimcache)
-
-  if not isNavigatorTest:
-    for file in tooltests:
-      for target in targets:
-        let nimcache = nimcacheDir(file, options, target)
-        removeDir(nimcache)
-
-        let oldPassed = r.passed
-        checkTest()
-
-        if r.passed == oldPassed+1:
-          checkTest()
-          if r.passed == oldPassed+2:
-            checkTest()
-
-  const tempExt = "_temp.nim"
-  for it in walkDirRec(testsDir):
-  # for it in ["tests/ic/timports.nim"]: # debugging: to try a specific test
-    if isTestFile(it) and not it.endsWith(tempExt):
-      for target in targets:
-        let nimcache = nimcacheDir(it, options, target)
-        removeDir(nimcache)
-
-        let content = readFile(it)
-        for fragment in content.split("#!EDIT!#"):
-          let file = it.replace(".nim", tempExt)
-          writeFile(file, fragment)
-          let oldPassed = r.passed
-          editedTest(if isNavigatorTest: navTestConfig else: incrementalOn)
-          if r.passed != oldPassed+1: break
+  for testFile in os.walkDirRec("lib/pure/"):
+    if isValid(testFile):
+      let testId: TestId = execState.testFiles.len
+      execState.testFiles.add TestFile(file: testFile, catId: catId)
+      execState.testOpts[testId] = TestOptionData(action: some(actionCompile))
 
 # ----------------------------------------------------------------------------
 
-# const AdditionalCategories = ["debugger", "lib", "ic", "navigator"]
-const AdditionalCategories = ["debugger", "lib"]
-const MegaTestCat = "megatest"
+const
+  AdditionalCategories = ["debugger", "lib"]
+  MegaTestCat = "megatest"
 
 proc `&.?`(a, b: string): string =
   # candidate for the stdlib?
@@ -353,7 +366,7 @@ proc isJoinableSpec(spec: TSpec): bool =
     not fileExists(parentDir(spec.file) / "nim.cfg") and
     not fileExists(parentDir(spec.file) / "config.nims") and
     spec.cmd.len == 0 and
-    spec.err notin {reDisabled, reKnownIssue} and
+    (spec.err != reDisabled) and
     not spec.unjoinable and
     spec.exitCode == 0 and
     spec.input.len == 0 and
@@ -491,11 +504,32 @@ proc processCategory(r: var TResults, cat: Category,
                      options, testsDir: string,
                      runJoinableTests: bool) =
   let cat2 = cat.string.split("/")[0].normalize
-  case cat2
-  of "js":
-    # only run the JS tests on Windows or Linux because some CI and other OSes
-    # like Haiku might hijack/lack nodejs:
-    if not defined(linux) or not defined(windows):
+  var handled = false
+  if isNimRepoTests():
+    handled = true
+    case cat2
+    of "js":
+      # only run the JS tests on Windows or Linux because Travis is bad
+      # and other OSes like Haiku might lack nodejs:
+      if not defined(linux) and isTravis:
+        discard
+      else:
+        jsTests(r, cat, options)
+    of "dll":
+      dllTests(r, cat, options)
+    of "gc":
+      gcTests(r, cat, options)
+    of "debugger":
+      debuggerTests(r, cat, options)
+    of "manyloc":
+      manyLoc r, cat, options
+    of "threads":
+      threadTests r, cat, options & " --threads:on"
+    of "lib":
+      testStdlib(r, "lib/pure/", options, cat)
+    of "untestable":
+      # These require special treatment e.g. because they depend on a third party
+      # dependency; see `trunner_special` which runs some of those.
       discard
     else:
       jsTests(r, cat, options)

@@ -19,5 +19,5 @@ t04_warning.nim(20, 12) Warning: gen1 name of the argument is float [User]
 proc gen1[T](arg: T) =
   {.warning: "gen1 name of the argument is " & $T.}
 
-gen1[int](1)
+gen1[int64](1)
 gen1[float](1.0)

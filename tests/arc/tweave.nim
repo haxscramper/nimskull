@@ -1,5 +1,6 @@
 discard """
   outputsub: '''Success'''
+  matrix: "--gc:arc --threads:on"
   disabled: "bsd"
   matrix: "--gc:arc --threads:on"
 """

@@ -4,7 +4,6 @@ Test pragma annotations that can be used on identifier declaratios.
 '''
 
 matrix: "-d:strdefineUsed='test' -d:intdefineUsed=2 -d:booldefineUsed=false"
-
 """
 
 ## It is possible to put pragma annotations on different variable declarations.

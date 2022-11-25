@@ -1,6 +1,6 @@
 discard """
-  target: "cpp"
   matrix: "--gc:arc"
+  targets: "cpp"
 """
 
 block: # issue #13071

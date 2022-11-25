@@ -25,6 +25,9 @@ type TestamentData* = ref object
   batchArg*: string
   testamentNumBatch*: int
   testamentBatch*: int
+  includeKnownIssues*: bool
+    ## whether to run knownIssues as part of this test run
+  withMegaTestRun*: bool
 
 # global mutable state for funsies
 var
@@ -45,24 +48,27 @@ type
     ocSubstr = "substr"
 
   TResultEnum* = enum
-    reNimcCrash,       # nim compiler seems to have crashed
-    reMsgsDiffer,      # error messages differ
-    reFilesDiffer,     # expected and given filenames differ
-    reLinesDiffer,     # expected and given line numbers differ
+    reNimcCrash,       ## nim compiler seems to have crashed
+    reMsgsDiffer,      ## error messages differ
+    reFilesDiffer,     ## expected and given filenames differ
+    reLinesDiffer,     ## expected and given line numbers differ
     reOutputsDiffer,
-    reExitcodesDiffer, # exit codes of program or of valgrind differ
+    reExitcodesDiffer, ## exit codes of program or of valgrind differ
     reTimeout,
     reInvalidPeg,
     reCodegenFailure,
     reCodeNotFound,
     reExeNotFound,
-    reInstallFailed    # package installation failed
-    reBuildFailed      # package building failed
-    reDisabled,        # test is disabled
-    reJoined,          # test is disabled because it was joined into the megatest
-    reInvalidSpec      # test had problems to parse the spec
-    reKnownIssue       # test has a known issue(s) and is expected to fail
-    reSuccess          # test was successful
+    reInstallFailed    ## package installation failed
+    reBuildFailed      ## package building failed
+    reDisabled,        ## test is disabled
+    reKnownIssue,
+      ## test is either not run or assumed to not match expected condition, in
+      ## CI this should cause a "failure" so the test can be updated and marked
+      ## as working
+    reJoined,          ## disabled test because it was joined into megatest
+    reSuccess          ## test was successful
+    reInvalidSpec      ## test had problems to parse the spec
 
   TTarget* = enum
     targetC = "c"
@@ -148,7 +154,7 @@ var retryContainer* = RetryContainer(retry: false)
 proc getCmd*(s: TSpec): string =
   ## Get runner command for a given test specification
   if s.cmd.len == 0:
-    result = compilerPrefix & " $target --hints:on -d:testing --clearNimblePath --nimblePath:build/deps/pkgs $options $file"
+    result = compilerPrefix & " $target --hints:on -d:testing --clearNimblePath --nimblePath:build/deps/pkgs $outfileOption $options $file"
   else:
     result = s.cmd
 
@@ -368,7 +374,7 @@ proc parseSpec*(filename: string,
     case e.kind
     of cfgKeyValuePair:
       let key = e.key.normalize
-      const allowMultipleOccurences = ["disabled", "ccodecheck" , "knownissue"]
+      const allowMultipleOccurences = ["disabled", "ccodecheck", "knownissue"]
         ## list of flags that are correctly handled when passed multiple times
         ## (instead of being overwritten)
       if key notin allowMultipleOccurences:
@@ -550,7 +556,14 @@ proc parseSpec*(filename: string,
         of "n", "no", "false", "0": discard
         else:
             result.knownIssues.add e.value
-            result.err = reKnownIssue
+            # choose here whether we'll run known issues or not
+            # xxx: better option would be to defer this decisions but this code
+            #      is so far from something so nice.
+            result.err =
+              if testamentData0.includeKnownIssues:
+                reKnownIssue
+              else:
+                reDisabled
       of "labels":
          discard """
          Adding only key support for now.
